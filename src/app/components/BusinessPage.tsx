@@ -29,7 +29,7 @@ function parseAmount(value: string) {
 function normalizeBusiness(item: Partial<Business>): Business {
   return {
     id: item.id ?? `business-${Date.now()}`,
-    name: item.name ?? "Kh�ng gian kinh doanh",
+    name: item.name ?? "Không gian kinh doanh",
     type: item.type ?? "Kinh doanh",
     status: item.status ?? "active",
     cash: Number(item.cash ?? 0),
@@ -87,7 +87,7 @@ function aggregateBusinesses(items: Business[]): Business {
   }
   return {
     id: "all",
-    name: "Tất cả kh�ng gian",
+    name: "Tất cả không gian",
     type: "Tổng hợp",
     status: "active",
     cash: items.reduce((sum, item) => sum + item.cash, 0),
@@ -99,7 +99,7 @@ function aggregateBusinesses(items: Business[]): Business {
     receivable: items.reduce((sum, item) => sum + item.receivable, 0),
     payable: items.reduce((sum, item) => sum + item.payable, 0),
     chart: Array.from(chartMap.values()),
-    transactions: items.flatMap((item) => (item.transactions ?? []).map((tx) => ({ ...tx, source: `${item.name} � ${tx.source}` }))),
+    transactions: items.flatMap((item) => (item.transactions ?? []).map((tx) => ({ ...tx, source: `${item.name} · ${tx.source}` }))),
   };
 }
 
@@ -109,7 +109,7 @@ function ModalShell({ title, sub, onClose, children }: { title: string; sub?: st
       <motion.div initial={{ y: 32, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 32, opacity: 0 }} className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-[28px] bg-white p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#A3A3A3]">Kh�ng gian kinh doanh</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#A3A3A3]">Không gian kinh doanh</p>
             <h2 className="mt-1 text-xl font-semibold text-[#111111]">{title}</h2>
             {sub && <p className="mt-1 text-sm text-[#666666]">{sub}</p>}
           </div>
@@ -149,11 +149,11 @@ function BusinessSelector({ value, businesses, onChange }: { value: string; busi
   return (
     <div className="min-w-[220px]">
       <FormSelect
-        title="Chọn kh�ng gian kinh doanh"
+        title="Chọn không gian kinh doanh"
         value={value}
         onChange={onChange}
         options={[
-          { value: "all", label: "Tất cả kh�ng gian", sub: `Tổng hợp � ${formatMoney(totalCash)}` },
+          { value: "all", label: "Tất cả không gian", sub: `Tổng hợp · ${formatMoney(totalCash)}` },
           ...businesses.map((item) => ({ value: item.id, label: item.name, sub: item.type, right: formatMoney(item.cash) })),
         ]}
       />
@@ -175,20 +175,20 @@ function CreateBusinessModal({ businesses, onClose, onConfirm }: { businesses: B
   const invalid = !name.trim() || duplicate || value < 0 || value > (account?.balance ?? 0);
 
   return (
-    <ModalShell title="Th�m kh�ng gian kinh doanh" sub="Tạo kh�ng gian ri�ng để theo d�i tiền mặt, vốn g�p, doanh thu, chi ph� v� c�ng nợ." onClose={onClose}>
+    <ModalShell title="Thêm không gian kinh doanh" sub="Tạo không gian riêng để theo dõi tiền mặt, vốn góp, doanh thu, chi phí và công nợ." onClose={onClose}>
       <div className="space-y-4">
-        <Field label="T�n kh�ng gian"><input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} placeholder="V� dụ: Qu�n cafe" /></Field>
+        <Field label="Tên không gian"><input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} placeholder="Ví dụ: Quán cafe" /></Field>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Loại h�nh"><input className={inputClass} value={type} onChange={(event) => setType(event.target.value)} placeholder="Dịch vụ, b�n lẻ..." /></Field>
+          <Field label="Loại hình"><input className={inputClass} value={type} onChange={(event) => setType(event.target.value)} placeholder="Dịch vụ, bán lẻ..." /></Field>
           <QuickDateField value={date} onChange={setDate} />
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Vốn ban đầu"><input className={inputClass} value={amount} inputMode="numeric" onChange={(event) => setAmount(event.target.value)} /></Field>
-          <Field label="T�i khoản c� nh�n nguồn"><FormSelect title="Chọn t�i khoản nguồn" value={accountId} onChange={setAccountId} options={accounts.map((item) => ({ value: item.id, label: item.name, sub: `C� nh�n � ${formatMoney(item.balance)}` }))} /></Field>
+          <Field label="Tài khoản cá nhân nguồn"><FormSelect title="Chọn tài khoản nguồn" value={accountId} onChange={setAccountId} options={accounts.map((item) => ({ value: item.id, label: item.name, sub: `Cá nhân · ${formatMoney(item.balance)}` }))} /></Field>
         </div>
-        <Field label="Ghi ch�"><textarea className={cn(inputClass, "min-h-20")} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi ch�" /></Field>
-        <p className="rounded-2xl bg-[#F8F6F3] px-4 py-3 text-sm text-[#666666]">Vốn ban đầu l�m tăng tiền mặt kinh doanh v� vốn g�p, kh�ng t�nh doanh thu hoặc chi ph�.</p>
-        {duplicate && <p className="rounded-2xl bg-[#FEF2F2] px-4 py-3 text-sm font-semibold text-[#B22222]">T�n kh�ng gian đ� tồn tại.</p>}
+        <Field label="Ghi chú"><textarea className={cn(inputClass, "min-h-20")} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi chú" /></Field>
+        <p className="rounded-2xl bg-[#F8F6F3] px-4 py-3 text-sm text-[#666666]">Vốn ban đầu làm tăng tiền mặt kinh doanh và vốn góp, không tính doanh thu hoặc chi phí.</p>
+        {duplicate && <p className="rounded-2xl bg-[#FEF2F2] px-4 py-3 text-sm font-semibold text-[#B22222]">Tên không gian đã tồn tại.</p>}
         <div className="grid grid-cols-2 gap-3">
           <button onClick={onClose} className="rounded-2xl border border-black/[0.12] py-3 font-semibold">Hủy</button>
           <button disabled={invalid} onClick={() => { onConfirm({ name: name.trim(), type: type.trim() || "Kinh doanh", amount: value, accountId, date, note }); onClose(); }} className="rounded-2xl bg-[#B22222] py-3 font-semibold text-white disabled:bg-[#D4D4D4]">Tạo</button>
@@ -208,20 +208,20 @@ function BusinessActionModal({ type, biz, onClose, onConfirm }: { type: Exclude<
   const value = parseAmount(amount);
   const needsPersonalSource = type === "capital" || type === "cashTopup";
   const titleMap: Record<Exclude<ModalKind, "create" | "withdraw" | null>, string> = {
-    capital: "G�p vốn",
+    capital: "Góp vốn",
     cashTopup: "Bổ sung tiền mặt",
     revenue: "Thu tiền",
     expense: "Chi tiền",
-    receivable: "C�ng nợ phải thu",
-    payable: "C�ng nợ phải trả",
+    receivable: "Công nợ phải thu",
+    payable: "Công nợ phải trả",
   };
   const noteMap: Record<Exclude<ModalKind, "create" | "withdraw" | null>, string> = {
-    capital: "G�p vốn tăng tiền mặt v� vốn g�p, kh�ng phải doanh thu.",
-    cashTopup: "Bổ sung tiền mặt chỉ tăng tiền mặt, kh�ng tăng vốn g�p.",
-    revenue: "Thu tiền đ� nhận: tiền mặt tăng v� doanh thu tăng.",
-    expense: "Chi tiền đ� trả: tiền mặt giảm v� chi ph� tăng.",
-    receivable: "Ghi nhận phải thu: doanh thu tăng, c�ng nợ tăng, tiền mặt chưa tăng.",
-    payable: "Ghi nhận phải trả: chi ph� tăng, c�ng nợ tăng, tiền mặt chưa giảm.",
+    capital: "Góp vốn tăng tiền mặt và vốn góp, không phải doanh thu.",
+    cashTopup: "Bổ sung tiền mặt chỉ tăng tiền mặt, không tăng vốn góp.",
+    revenue: "Thu tiền đã nhận: tiền mặt tăng và doanh thu tăng.",
+    expense: "Chi tiền đã trả: tiền mặt giảm và chi phí tăng.",
+    receivable: "Ghi nhận phải thu: doanh thu tăng, công nợ tăng, tiền mặt chưa tăng.",
+    payable: "Ghi nhận phải trả: chi phí tăng, công nợ tăng, tiền mặt chưa giảm.",
   };
   const account = accounts.find((item) => item.id === accountId);
   const invalid = value <= 0 || (needsPersonalSource && value > (account?.balance ?? 0)) || (type === "expense" && value > biz.cash);
@@ -229,13 +229,13 @@ function BusinessActionModal({ type, biz, onClose, onConfirm }: { type: Exclude<
   return (
     <ModalShell title={titleMap[type]} sub={biz.name} onClose={onClose}>
       <div className="space-y-4">
-        {needsPersonalSource && <Field label="T�i khoản c� nh�n nguồn"><FormSelect title="Chọn t�i khoản nguồn" value={accountId} onChange={setAccountId} options={accounts.map((item) => ({ value: item.id, label: item.name, sub: `C� nh�n � ${formatMoney(item.balance)}` }))} /></Field>}
-        {(type === "receivable" || type === "payable") && <Field label={type === "receivable" ? "Kh�ch h�ng / người nợ" : "Nh� cung cấp / người cần trả"}><input className={inputClass} value={counterparty} onChange={(event) => setCounterparty(event.target.value)} placeholder={type === "receivable" ? "V� dụ: Kh�ch A" : "V� dụ: Nh� cung cấp A"} /></Field>}
+        {needsPersonalSource && <Field label="Tài khoản cá nhân nguồn"><FormSelect title="Chọn tài khoản nguồn" value={accountId} onChange={setAccountId} options={accounts.map((item) => ({ value: item.id, label: item.name, sub: `Cá nhân · ${formatMoney(item.balance)}` }))} /></Field>}
+        {(type === "receivable" || type === "payable") && <Field label={type === "receivable" ? "Khách hàng / người nợ" : "Nhà cung cấp / người cần trả"}><input className={inputClass} value={counterparty} onChange={(event) => setCounterparty(event.target.value)} placeholder={type === "receivable" ? "Ví dụ: Khách A" : "Ví dụ: Nhà cung cấp A"} /></Field>}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Số tiền"><input className={inputClass} value={amount} inputMode="numeric" onChange={(event) => setAmount(event.target.value)} /></Field>
           <QuickDateField value={date} onChange={setDate} />
         </div>
-        <Field label="Ghi ch�"><textarea className={cn(inputClass, "min-h-20")} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi ch�" /></Field>
+        <Field label="Ghi chú"><textarea className={cn(inputClass, "min-h-20")} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi chú" /></Field>
         <p className="rounded-2xl bg-[#F8F6F3] px-4 py-3 text-sm text-[#666666]">{noteMap[type]}</p>
         <div className="grid grid-cols-2 gap-3">
           <button onClick={onClose} className="rounded-2xl border border-black/[0.12] py-3 font-semibold">Hủy</button>
@@ -257,22 +257,22 @@ function WithdrawModal({ biz, onClose, onConfirm }: { biz: Business; onClose: ()
   const invalid = value <= 0 || value > biz.cash || value > Math.max(0, biz.retainedProfit) + Math.max(0, biz.capital);
 
   return (
-    <ModalShell title="R�t tiền về C� nh�n" sub="Ưu ti�n r�t từ lợi nhuận giữ lại, phần thiếu mới trừ vốn g�p." onClose={onClose}>
+    <ModalShell title="Rút tiền về Cá nhân" sub="Ưu tiên rút từ lợi nhuận giữ lại, phần thiếu mới trừ vốn góp." onClose={onClose}>
       <div className="space-y-4">
-        <Field label="T�i khoản nhận"><FormSelect title="Chọn t�i khoản nhận" value={accountId} onChange={setAccountId} options={accounts.map((item) => ({ value: item.id, label: item.name, sub: `C� nh�n � ${formatMoney(item.balance)}` }))} /></Field>
+        <Field label="Tài khoản nhận"><FormSelect title="Chọn tài khoản nhận" value={accountId} onChange={setAccountId} options={accounts.map((item) => ({ value: item.id, label: item.name, sub: `Cá nhân · ${formatMoney(item.balance)}` }))} /></Field>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Số tiền r�t"><input className={inputClass} value={amount} inputMode="numeric" onChange={(event) => setAmount(event.target.value)} /></Field>
+          <Field label="Số tiền rút"><input className={inputClass} value={amount} inputMode="numeric" onChange={(event) => setAmount(event.target.value)} /></Field>
           <QuickDateField value={date} onChange={setDate} />
         </div>
         <div className="grid grid-cols-2 gap-3 rounded-2xl bg-[#F8F6F3] p-4 text-sm">
-          <div><p className="text-[10px] font-semibold uppercase text-[#666666]">R�t từ lợi nhuận</p><p className="mt-1 font-semibold text-[#166534]">{formatMoney(fromProfit)}</p></div>
-          <div><p className="text-[10px] font-semibold uppercase text-[#666666]">R�t từ vốn</p><p className="mt-1 font-semibold text-[#B45309]">{formatMoney(fromCapital)}</p></div>
-          <div><p className="text-[10px] font-semibold uppercase text-[#666666]">Lợi nhuận sau r�t</p><p className="mt-1 font-semibold">{formatMoney(biz.retainedProfit - fromProfit)}</p></div>
-          <div><p className="text-[10px] font-semibold uppercase text-[#666666]">Vốn g�p c�n lại</p><p className="mt-1 font-semibold">{formatMoney(biz.capital - fromCapital)}</p></div>
+          <div><p className="text-[10px] font-semibold uppercase text-[#666666]">Rút từ lợi nhuận</p><p className="mt-1 font-semibold text-[#166534]">{formatMoney(fromProfit)}</p></div>
+          <div><p className="text-[10px] font-semibold uppercase text-[#666666]">Rút từ vốn</p><p className="mt-1 font-semibold text-[#B45309]">{formatMoney(fromCapital)}</p></div>
+          <div><p className="text-[10px] font-semibold uppercase text-[#666666]">Lợi nhuận sau rút</p><p className="mt-1 font-semibold">{formatMoney(biz.retainedProfit - fromProfit)}</p></div>
+          <div><p className="text-[10px] font-semibold uppercase text-[#666666]">Vốn góp còn lại</p><p className="mt-1 font-semibold">{formatMoney(biz.capital - fromCapital)}</p></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <button onClick={onClose} className="rounded-2xl border border-black/[0.12] py-3 font-semibold">Hủy</button>
-          <button disabled={invalid} onClick={() => { onConfirm(value, accountId, date); onClose(); }} className="rounded-2xl bg-[#B22222] py-3 font-semibold text-white disabled:bg-[#D4D4D4]">X�c nhận</button>
+          <button disabled={invalid} onClick={() => { onConfirm(value, accountId, date); onClose(); }} className="rounded-2xl bg-[#B22222] py-3 font-semibold text-white disabled:bg-[#D4D4D4]">Xác nhận</button>
         </div>
       </div>
     </ModalShell>
@@ -291,11 +291,11 @@ function TransactionPanel({ title, subtitle, transactions }: { title: string; su
           <div key={tx.id} className="flex items-center justify-between gap-3 px-5 py-4">
             <div>
               <p className="font-semibold text-[#111111]">{tx.name}</p>
-              <p className="mt-0.5 text-xs text-[#A3A3A3]">{tx.date} � {tx.note}</p>
+              <p className="mt-0.5 text-xs text-[#A3A3A3]">{tx.date} · {tx.note}</p>
             </div>
             <p className={cn("text-sm font-semibold", tx.countsAsIncome ? "text-[#166534]" : tx.countsAsExpense ? "text-[#B22222]" : "text-[#111111]")}>{formatMoney(tx.amount)}</p>
           </div>
-        )) : <p className="px-5 py-6 text-sm text-[#A3A3A3]">Chưa c� giao dịch.</p>}
+        )) : <p className="px-5 py-6 text-sm text-[#A3A3A3]">Chưa có giao dịch.</p>}
       </div>
     </div>
   );
@@ -334,13 +334,13 @@ export function BusinessPage() {
     const tx: CashflowTransaction = {
       id: `business-create-${Date.now()}`,
       date: payload.date,
-      name: "G�p vốn ban đầu",
+      name: "Góp vốn ban đầu",
       space: "Kinh doanh",
       source: payload.name,
       amount: payload.amount,
       kind: "transfer",
       status: "active",
-      note: payload.note || "Vốn ban đầu, kh�ng t�nh doanh thu hoặc chi ph�",
+      note: payload.note || "Vốn ban đầu, không tênh doanh thu hoặc chi phí",
     };
     const next: Business = {
       id,
@@ -366,7 +366,7 @@ export function BusinessPage() {
   function handleAction(payload: { type: Exclude<ModalKind, "create" | "withdraw" | null>; amount: number; accountId: string; date: string; counterparty: string; note: string }) {
     if (isAll || !selected || payload.amount <= 0) return;
     const titleMap: Record<Exclude<ModalKind, "create" | "withdraw" | null>, string> = {
-      capital: "G�p vốn kinh doanh",
+      capital: "Góp vốn kinh doanh",
       cashTopup: "Bổ sung tiền mặt",
       revenue: "Thu tiền kinh doanh",
       expense: "Chi tiền kinh doanh",
@@ -437,13 +437,13 @@ export function BusinessPage() {
       transactions: [{
         id: `business-withdraw-${Date.now()}`,
         date,
-        name: "R�t tiền về C� nh�n",
+        name: "Rút tiền về Cá nhân",
         space: "Kinh doanh",
-        source: `${item.name} -> C� nh�n`,
+        source: `${item.name} -> Cá nhân`,
         amount,
         kind: "transfer",
         status: "active",
-        note: `R�t từ lợi nhuận ${formatMoney(fromProfit)}, r�t từ vốn ${formatMoney(fromCapital)}`,
+        note: `Rút từ lợi nhuận ${formatMoney(fromProfit)}, rút từ vốn ${formatMoney(fromCapital)}`,
       }, ...item.transactions],
     }));
     changeAccount(accountId, amount);
@@ -452,21 +452,21 @@ export function BusinessPage() {
   const tabs: { id: TabKind; label: string; count?: number }[] = [
     { id: "overview", label: "Tổng quan" },
     { id: "revenue", label: "Doanh thu", count: (biz.transactions ?? []).filter((tx) => tx.countsAsIncome).length },
-    { id: "expense", label: "Chi ph�", count: (biz.transactions ?? []).filter((tx) => tx.countsAsExpense).length },
-    { id: "receivable", label: "C�ng nợ phải thu", count: biz.receivable > 0 ? 1 : 0 },
-    { id: "payable", label: "C�ng nợ phải trả", count: biz.payable > 0 ? 1 : 0 },
-    { id: "capital", label: "R�t/G�p vốn", count: (biz.transactions ?? []).filter((tx) => !tx.countsAsIncome && !tx.countsAsExpense).length },
+    { id: "expense", label: "Chi phí", count: (biz.transactions ?? []).filter((tx) => tx.countsAsExpense).length },
+    { id: "receivable", label: "Công nợ phải thu", count: biz.receivable > 0 ? 1 : 0 },
+    { id: "payable", label: "Công nợ phải trả", count: biz.payable > 0 ? 1 : 0 },
+    { id: "capital", label: "Rút/Góp vốn", count: (biz.transactions ?? []).filter((tx) => !tx.countsAsIncome && !tx.countsAsExpense).length },
   ];
 
   const kpis = [
-    { label: "Gi� trị r�ng kinh doanh", value: formatMoney(businessValue), icon: DollarSign, color: "text-[#111111]" },
+    { label: "Giá trị ròng kinh doanh", value: formatMoney(businessValue), icon: DollarSign, color: "text-[#111111]" },
     { label: "Tiền mặt", value: formatMoney(biz.cash), icon: DollarSign, color: "text-[#111111]" },
-    { label: "Vốn g�p", value: formatMoney(biz.capital), icon: BriefcaseBusiness, color: "text-[#111111]" },
+    { label: "Vốn góp", value: formatMoney(biz.capital), icon: BriefcaseBusiness, color: "text-[#111111]" },
     { label: "Lợi nhuận giữ lại", value: formatMoney(biz.retainedProfit), icon: ArrowDownToLine, color: biz.retainedProfit >= 0 ? "text-[#166534]" : "text-[#B22222]" },
-    { label: "Đ� r�t về C� nh�n", value: formatMoney(biz.withdrawnToPersonal), icon: ArrowDownToLine, color: "text-[#B45309]" },
+    { label: "Đã rút về Cá nhân", value: formatMoney(biz.withdrawnToPersonal), icon: ArrowDownToLine, color: "text-[#B45309]" },
     { label: "Phải thu", value: formatMoney(biz.receivable), icon: Users, color: "text-[#B45309]" },
     { label: "Phải trả", value: formatMoney(biz.payable), icon: Package, color: "text-[#B22222]" },
-    { label: "ROI / Bi�n LN", value: `${formatPercent(roi)} / ${formatPercent(margin)}`, icon: TrendingUp, color: "text-[#166534]" },
+    { label: "ROI / Biên LN", value: `${formatPercent(roi)} / ${formatPercent(margin)}`, icon: TrendingUp, color: "text-[#166534]" },
   ];
 
   return (
@@ -474,7 +474,7 @@ export function BusinessPage() {
       <div className="mx-auto max-w-[1440px] space-y-6 px-6 py-8 lg:px-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-[#A3A3A3]">Kh�ng gian kinh doanh độc lập</p>
+            <p className="mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-[#A3A3A3]">Không gian kinh doanh độc lập</p>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <h1 className="text-[1.9rem] font-semibold leading-none text-[#111111]">Kinh doanh</h1>
               <BusinessSelector value={activeId} businesses={activeBusinesses} onChange={(value) => { setActiveId(value); setActiveTab("overview"); }} />
@@ -482,7 +482,7 @@ export function BusinessPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             <WorkspaceTimeFilter />
-            <button onClick={() => setModal("create")} className="rounded-xl bg-[#B22222] px-4 py-2.5 text-sm font-semibold text-white"><Plus className="mr-1 inline size-4" /> Th�m kh�ng gian</button>
+            <button onClick={() => setModal("create")} className="rounded-xl bg-[#B22222] px-4 py-2.5 text-sm font-semibold text-white"><Plus className="mr-1 inline size-4" /> Thêm không gian</button>
           </div>
         </div>
 
@@ -498,13 +498,13 @@ export function BusinessPage() {
                   <p className="mt-1 text-xs text-[#A3A3A3]">{item.type}</p>
                   <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
                     <span>Tiền mặt</span><span className="text-right font-semibold">{formatMoney(item.cash)}</span>
-                    <span>Vốn g�p</span><span className="text-right font-semibold">{formatMoney(item.capital)}</span>
+                    <span>Vốn góp</span><span className="text-right font-semibold">{formatMoney(item.capital)}</span>
                     <span>Lợi nhuận giữ lại</span><span className="text-right font-semibold">{formatMoney(item.retainedProfit)}</span>
                     <span>Doanh thu</span><span className="text-right font-semibold">{formatMoney(item.revenue)}</span>
-                    <span>Chi ph�</span><span className="text-right font-semibold">{formatMoney(item.expenses)}</span>
+                    <span>Chi phí</span><span className="text-right font-semibold">{formatMoney(item.expenses)}</span>
                     <span>Lợi nhuận</span><span className="text-right font-semibold">{formatMoney(itemProfit)}</span>
                     <span>ROI</span><span className="text-right font-semibold">{formatPercent(itemRoi)}</span>
-                    <span>Bi�n LN</span><span className="text-right font-semibold">{formatPercent(itemMargin)}</span>
+                    <span>Biên LN</span><span className="text-right font-semibold">{formatPercent(itemMargin)}</span>
                   </div>
                 </div>
               );
@@ -536,17 +536,17 @@ export function BusinessPage() {
 
         {isAll ? (
           <div className="rounded-2xl border border-black/[0.06] bg-white px-4 py-3 text-sm text-[#666666]">
-            Đang xem tổng hợp tất cả kh�ng gian. Chọn một workspace cụ thể ở bộ chọn ph�a tr�n để ghi nhận giao dịch, c�ng nợ, r�t hoặc g�p vốn.
+            Đang xem tổng hợp tất cả không gian. Chọn một workspace cụ thể ở bộ chọn phía trên để ghi nhận giao dịch, công nợ, rút hoặc góp vốn.
           </div>
         ) : (
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => setModal("capital")} className="rounded-xl border border-black/[0.1] bg-white px-3.5 py-2 text-xs font-semibold">G�p vốn</button>
+            <button onClick={() => setModal("capital")} className="rounded-xl border border-black/[0.1] bg-white px-3.5 py-2 text-xs font-semibold">Góp vốn</button>
             <button onClick={() => setModal("cashTopup")} className="rounded-xl border border-black/[0.1] bg-white px-3.5 py-2 text-xs font-semibold">Bổ sung tiền mặt</button>
             <button onClick={() => setModal("revenue")} className="rounded-xl border border-black/[0.1] bg-white px-3.5 py-2 text-xs font-semibold">Thu tiền</button>
             <button onClick={() => setModal("expense")} className="rounded-xl border border-black/[0.1] bg-white px-3.5 py-2 text-xs font-semibold">Chi tiền</button>
-            <button onClick={() => setModal("withdraw")} className="rounded-xl bg-[#B22222] px-3.5 py-2 text-xs font-semibold text-white">R�t tiền về C� nh�n</button>
-            <button onClick={() => setModal("receivable")} className="rounded-xl border border-black/[0.1] bg-white px-3.5 py-2 text-xs font-semibold">C�ng nợ phải thu</button>
-            <button onClick={() => setModal("payable")} className="rounded-xl border border-black/[0.1] bg-white px-3.5 py-2 text-xs font-semibold">C�ng nợ phải trả</button>
+            <button onClick={() => setModal("withdraw")} className="rounded-xl bg-[#B22222] px-3.5 py-2 text-xs font-semibold text-white">Rút tiền về Cá nhân</button>
+            <button onClick={() => setModal("receivable")} className="rounded-xl border border-black/[0.1] bg-white px-3.5 py-2 text-xs font-semibold">Công nợ phải thu</button>
+            <button onClick={() => setModal("payable")} className="rounded-xl border border-black/[0.1] bg-white px-3.5 py-2 text-xs font-semibold">Công nợ phải trả</button>
           </div>
         )}
 
@@ -554,8 +554,8 @@ export function BusinessPage() {
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
             <div className="rounded-2xl border border-black/[0.07] bg-white p-6 lg:col-span-2">
               <div className="mb-5 flex justify-between gap-4">
-                <div><p className="text-xs font-semibold uppercase text-[#A3A3A3]">B�o c�o ri�ng</p><p className="font-semibold text-[#111111]">{biz.name} - Doanh thu / Chi ph�</p></div>
-                <div className="text-right"><p className="text-xs text-[#A3A3A3]">Bi�n lợi nhuận - ROI</p><p className="font-semibold text-[#166534]">{formatPercent(margin)} - {formatPercent(roi)}</p></div>
+                <div><p className="text-xs font-semibold uppercase text-[#A3A3A3]">Báo cáo riêng</p><p className="font-semibold text-[#111111]">{biz.name} - Doanh thu / Chi phí</p></div>
+                <div className="text-right"><p className="text-xs text-[#A3A3A3]">Biên lợi nhuận - ROI</p><p className="font-semibold text-[#166534]">{formatPercent(margin)} - {formatPercent(roi)}</p></div>
               </div>
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={biz.chart} margin={{ left: -20 }}>
@@ -563,18 +563,18 @@ export function BusinessPage() {
                   <YAxis tick={{ fontSize: 11, fill: "#A3A3A3" }} axisLine={false} tickLine={false} tickFormatter={(value) => `${value}M`} />
                   <Tooltip content={<ChartTip />} />
                   <Bar dataKey="r" name="Doanh thu" fill="#111111" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="e" name="Chi ph�" fill="#B22222" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="e" name="Chi phí" fill="#B22222" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <TransactionPanel title="Giao dịch ri�ng" subtitle="G�p vốn/r�t tiền kh�ng t�nh doanh thu/chi ph�" transactions={biz.transactions ?? []} />
+            <TransactionPanel title="Giao dịch riêng" subtitle="Góp vốn/rút tiền không tênh doanh thu/chi phí" transactions={biz.transactions ?? []} />
           </div>
         )}
         {activeTab === "revenue" && <TransactionPanel title="Doanh thu" subtitle="Chỉ gồm khoản thu kinh doanh hoặc phải thu mới." transactions={(biz.transactions ?? []).filter((tx) => tx.countsAsIncome)} />}
-        {activeTab === "expense" && <TransactionPanel title="Chi ph�" subtitle="Chỉ gồm chi ph� kinh doanh hoặc phải trả mới." transactions={(biz.transactions ?? []).filter((tx) => tx.countsAsExpense)} />}
-        {activeTab === "capital" && <TransactionPanel title="R�t/G�p vốn" subtitle="Giao dịch vốn v� chuyển tiền nội bộ, kh�ng phải doanh thu/chi ph�." transactions={(biz.transactions ?? []).filter((tx) => !tx.countsAsIncome && !tx.countsAsExpense)} />}
-        {activeTab === "receivable" && <TransactionPanel title="C�ng nợ phải thu" subtitle={`Tổng phải thu c�n lại: ${formatMoney(biz.receivable)}`} transactions={(biz.transactions ?? []).filter((tx) => tx.name.includes("phải thu") || tx.note.includes("phải thu"))} />}
-        {activeTab === "payable" && <TransactionPanel title="C�ng nợ phải trả" subtitle={`Tổng phải trả c�n lại: ${formatMoney(biz.payable)}`} transactions={(biz.transactions ?? []).filter((tx) => tx.name.includes("phải trả") || tx.note.includes("phải trả"))} />}
+        {activeTab === "expense" && <TransactionPanel title="Chi phí" subtitle="Chỉ gồm chi phí kinh doanh hoặc phải trả mới." transactions={(biz.transactions ?? []).filter((tx) => tx.countsAsExpense)} />}
+        {activeTab === "capital" && <TransactionPanel title="Rút/Góp vốn" subtitle="Giao dịch vốn và chuyển tiền nội bộ, không phải doanh thu/chi phí." transactions={(biz.transactions ?? []).filter((tx) => !tx.countsAsIncome && !tx.countsAsExpense)} />}
+        {activeTab === "receivable" && <TransactionPanel title="Công nợ phải thu" subtitle={`Tổng phải thu còn lại: ${formatMoney(biz.receivable)}`} transactions={(biz.transactions ?? []).filter((tx) => tx.name.includes("phải thu") || tx.note.includes("phải thu"))} />}
+        {activeTab === "payable" && <TransactionPanel title="Công nợ phải trả" subtitle={`Tổng phải trả còn lại: ${formatMoney(biz.payable)}`} transactions={(biz.transactions ?? []).filter((tx) => tx.name.includes("phải trả") || tx.note.includes("phải trả"))} />}
       </div>
 
       <AnimatePresence>
