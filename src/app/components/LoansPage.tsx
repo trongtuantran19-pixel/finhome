@@ -5,6 +5,7 @@ import { cn } from "./ui/utils";
 import { WorkspaceTimeFilter } from "./WorkspaceTimeFilter";
 import { QuickDateField, todayISO } from "./QuickDateField";
 import { creditCards, formatMoney, loans, personalAccounts, type CashflowTransaction, type Loan, type PersonalAccount } from "../finhomeData";
+import { WorkspaceTransactionHistory } from "./WorkspaceTransactionHistory";
 import { appendStoredItem, finhomeStorageKeys, readStoredJson, writeStoredJson } from "../finhomeStorage";
 
 const PERSONAL_CARDS_STORAGE_KEY = finhomeStorageKeys.personalCards;
@@ -334,6 +335,7 @@ function CreditCardPaymentModal({ card, onClose, onPay }: { card: typeof creditC
 }
 
 export function LoansPage() {
+  const loanTransactions = readStoredJson<CashflowTransaction[]>(finhomeStorageKeys.personalTransactions, []).filter((tx) => tx.id.startsWith("loan-") || tx.id.startsWith("card-") || tx.kind.startsWith("loan_") || tx.kind.startsWith("credit_card_"));
   const [filter, setFilter] = useState<Filter>("all");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [modal, setModal] = useState<LoanModal>(null);
@@ -511,6 +513,7 @@ export function LoansPage() {
       const pct = card.limit > 0 ? Math.round((card.used / card.limit) * 100) : 0;
       return <div key={card.id} className="rounded-2xl border border-black/[0.07] bg-white p-5"><div className="mb-4 rounded-2xl p-5 text-white" style={{ background: card.color }}><p className="text-xs text-white/50">Thẻ tín dụng</p><p className="font-semibold">{card.name}</p><p className="mt-6 text-xl font-semibold">{formatMoney(card.used)}</p><p className="text-xs text-white/45">Hạn mức {formatMoney(card.limit)} · còn {formatMoney(Math.max(0, card.limit - card.used))}</p><p className="text-xs text-white/40">•••• {card.last4}</p></div><div className="mb-1 flex justify-between text-xs"><span>Hạn mức đã dùng</span><span>{pct}%</span></div><div className="mb-4 h-1.5 rounded-full bg-[#F5F5F5]"><div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: card.color }} /></div><p className="text-xs text-[#666666]">Đến hạn {shortDate(card.dueDate)}. Khi thanh toán chỉ giảm dư nợ thẻ, không ghi nhận chi tiêu lần hai.</p><button onClick={() => setModal({ type: "cardPay", cardId: card.id })} className="mt-4 w-full rounded-xl bg-[#111111] px-3.5 py-2.5 text-xs font-semibold text-white">Thanh toán thẻ tín dụng</button></div>;
     })}</div>}
+    <WorkspaceTransactionHistory title="Lịch sử giao dịch Khoản vay" subtitle="Giải ngân, trả gốc, trả lãi và thanh toán thẻ tín dụng." transactions={loanTransactions} />
   </div>
 
   <AnimatePresence>

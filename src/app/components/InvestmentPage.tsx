@@ -4,6 +4,7 @@ import { ArrowRightLeft, BarChart2, DollarSign, Plus, TrendingUp, X } from "luci
 import { cn } from "./ui/utils";
 import { WorkspaceTimeFilter } from "./WorkspaceTimeFilter";
 import { QuickDateField, todayISO } from "./QuickDateField";
+import { WorkspaceTransactionHistory } from "./WorkspaceTransactionHistory";
 import { FormSelect } from "./FormSelect";
 import {
   formatMoney,
@@ -277,6 +278,7 @@ function ProceedsModal({ sale, onClose, onConfirm }: { sale: PendingSale; onClos
 }
 
 export function InvestmentPage() {
+  const investmentTransactions = readStoredJson<CashflowTransaction[]>(finhomeStorageKeys.personalTransactions, []).filter((tx) => tx.id.startsWith("invest-") || ["investment_buy", "investment_sell"].includes(tx.kind));
   const [cash, setCash] = useState(loadCash);
   const [holdings, setHoldings] = useState(loadHoldings);
   const [modal, setModal] = useState<ModalKind>(null);
@@ -511,6 +513,8 @@ export function InvestmentPage() {
           )) : <p className="text-xs text-[#A3A3A3]">Chưa có khoản đã bán.</p>}
         </div>
       </div>
+
+      <WorkspaceTransactionHistory title="Lịch sử giao dịch Đầu tư" subtitle="Chuyển tiền, mua và bán tài sản đầu tư." transactions={investmentTransactions} />
 
       <AnimatePresence>
         {modal === "transfer" && <TransferModal cash={cash} onClose={() => setModal(null)} onConfirm={transferOut} />}

@@ -5,6 +5,7 @@ import { ArrowDownToLine, BriefcaseBusiness, DollarSign, Package, Plus, Trending
 import { cn } from "./ui/utils";
 import { WorkspaceTimeFilter } from "./WorkspaceTimeFilter";
 import { QuickDateField, todayISO } from "./QuickDateField";
+import { WorkspaceTransactionHistory } from "./WorkspaceTransactionHistory";
 import { FormSelect } from "./FormSelect";
 import {
   businessSpaces,
@@ -18,7 +19,7 @@ import { appendStoredItem, finhomeStorageKeys, readStoredJson, writeStoredJson }
 
 type Business = BusinessSpace;
 type ModalKind = "create" | "capital" | "cashTopup" | "revenue" | "expense" | "withdraw" | "receivable" | "payable" | null;
-type TabKind = "overview" | "revenue" | "expense" | "receivable" | "payable" | "capital";
+type TabKind = "overview" | "revenue" | "expense" | "receivable" | "payable" | "capital" | "history";
 
 const inputClass = "w-full rounded-2xl border border-black/[0.1] bg-white px-4 py-3 text-sm font-semibold text-[#111111] outline-none focus:border-[#B22222]";
 
@@ -467,6 +468,7 @@ export function BusinessPage() {
     { label: "Phải thu", value: formatMoney(biz.receivable), icon: Users, color: "text-[#B45309]" },
     { label: "Phải trả", value: formatMoney(biz.payable), icon: Package, color: "text-[#B22222]" },
     { label: "ROI / Biên LN", value: `${formatPercent(roi)} / ${formatPercent(margin)}`, icon: TrendingUp, color: "text-[#166534]" },
+    { id: "history", label: "Lịch sử giao dịch", count: (biz.transactions ?? []).length },
   ];
 
   return (
@@ -575,6 +577,7 @@ export function BusinessPage() {
         {activeTab === "capital" && <TransactionPanel title="Rút/Góp vốn" subtitle="Giao dịch vốn và chuyển tiền nội bộ, không phải doanh thu/chi phí." transactions={(biz.transactions ?? []).filter((tx) => !tx.countsAsIncome && !tx.countsAsExpense)} />}
         {activeTab === "receivable" && <TransactionPanel title="Công nợ phải thu" subtitle={`Tổng phải thu còn lại: ${formatMoney(biz.receivable)}`} transactions={(biz.transactions ?? []).filter((tx) => tx.name.includes("phải thu") || tx.note.includes("phải thu"))} />}
         {activeTab === "payable" && <TransactionPanel title="Công nợ phải trả" subtitle={`Tổng phải trả còn lại: ${formatMoney(biz.payable)}`} transactions={(biz.transactions ?? []).filter((tx) => tx.name.includes("phải trả") || tx.note.includes("phải trả"))} />}
+        {activeTab === "history" && <WorkspaceTransactionHistory title={isAll ? "Lịch sử tất cả không gian kinh doanh" : `Lịch sử ${biz.name}`} subtitle="Doanh thu, chi phí, công nợ và luồng góp/rút vốn." transactions={biz.transactions ?? []} />}
       </div>
 
       <AnimatePresence>

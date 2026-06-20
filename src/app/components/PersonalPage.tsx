@@ -9,7 +9,7 @@ import { finhomeStorageKeys, readStoredJson, writeStoredJson } from "../finhomeS
 
 const iconMap = { "Tiền mặt": Wallet, "Ngân hàng": Building, "Ví điện tử": Smartphone, "Ví khác": CreditCard } as const;
 type Account = typeof personalAccounts[0];
-type Tab = "accounts" | "income" | "expenses" | "transfers" | "cards";
+type Tab = "accounts" | "income" | "expenses" | "transfers" | "cards" | "history";
 type AccountModal = "detail" | "edit" | "adjust" | "actions" | "statement" | null;
 
 const tabs: { id: Tab; label: string; count: number }[] = [
@@ -18,6 +18,7 @@ const tabs: { id: Tab; label: string; count: number }[] = [
   { id: "expenses", label: "Chi tiêu", count: personalTransactions.filter(t => t.status !== "cancelled" && t.countsAsExpense).length },
   { id: "transfers", label: "Chuyển tiền", count: personalTransactions.filter(t => t.status !== "cancelled" && t.kind === "transfer").length },
   { id: "cards", label: "Thẻ tín dụng", count: creditCards.length },
+  { id: "history", label: "Lịch sử giao dịch", count: personalTransactions.length },
 ];
 
 function accountTx(acc: Account, transactions: CashflowTransaction[]) {
@@ -895,6 +896,7 @@ export function PersonalPage() {
     { id: "expenses" as const, label: "Chi tiêu", count: expenseItems.length },
     { id: "transfers" as const, label: "Chuyển tiền", count: transferItems.length },
     { id: "cards" as const, label: "Thẻ tín dụng", count: cards.length },
+    { id: "history" as const, label: "Lịch sử giao dịch", count: allTransactions.length },
   ];
   const applyTransactionToAccounts = (transaction: CashflowTransaction, direction: 1 | -1) => {
     const [from, to] = transaction.source.split(" -> ");
@@ -1014,6 +1016,7 @@ export function PersonalPage() {
         {tab === "expenses" && <List title="Chi tiêu cá nhân" total={`-${formatMoney(currentExpenses)}`} items={expenseItems} mode="expense" onDelete={setDeleteTarget} />}
         {tab === "transfers" && <List title="Luồng tiền không tính thu/chi" total="Không đổi tài sản ròng" items={transferItems} mode="neutral" onDelete={setDeleteTarget} />}
         {tab === "cards" && <motion.div key="cards" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="grid grid-cols-1 md:grid-cols-2 gap-4">{cards.map(card => { const available = Math.max(0, card.limit - card.used); const usagePct = card.limit ? Math.min(100, Math.round(card.used / card.limit * 100)) : 0; return <div key={card.id} className="rounded-2xl bg-white border border-black/[0.07] p-5"><div className="rounded-2xl p-5 text-white mb-4" style={{ background: card.color }}><div className="flex items-start justify-between gap-3"><div><p className="text-white/60 text-xs">{card.bank}</p><p className="font-semibold">{card.name}</p></div><div className="text-right"><p className="text-white/60 text-[10px] uppercase font-semibold tracking-[0.1em]">Hạn mức</p><p className="text-sm font-semibold">{formatMoney(card.limit)}</p></div></div><p className="text-2xl font-semibold mt-6">{formatMoney(card.used)}</p><p className="text-white/50 text-xs">Dư nợ thẻ · •••• {card.last4}</p><div className="mt-4 h-2 rounded-full bg-white/20"><div className="h-full rounded-full bg-white" style={{ width: `${usagePct}%` }} /></div><div className="mt-2 flex items-center justify-between text-[11px] text-white/70"><span>Đã dùng {usagePct}%</span><span>Còn {formatMoney(available)}</span></div></div><p className="text-xs text-[#666666]">Chi tiêu bằng thẻ tạo chi tiêu và tăng nợ thẻ. Thanh toán thẻ không tính chi tiêu lần hai.</p></div>; })}</motion.div>}
+        {tab === "history" && <PersonalTransactionHistory items={allTransactions} onDelete={setDeleteTarget} />}
       </AnimatePresence>
     </div><AnimatePresence>{showTransfer && <TransferModal onClose={() => setShowTransfer(false)} accounts={accounts} onConfirm={addTransaction} />}
       {showCardPayment && <CreditCardPaymentModal onClose={() => setShowCardPayment(false)} accounts={accounts} cards={cards} onPay={payCreditCard} />}{showTransaction && <AddTransactionModal onClose={() => setShowTransaction(false)} onAdd={addTransaction} accounts={accounts} cards={cards} />}{deleteTarget && <DeleteTransactionModal transaction={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => cancelTransaction(deleteTarget)} />}{showAddAccount && <AddAccountModal onClose={() => setShowAddAccount(false)} onAdd={(account) => setAccounts((items) => [...items, account])} />}{selectedAccount && accountModal && <AccountModalView modal={accountModal} acc={selectedAccount} transactions={allTransactions} onClose={() => setAccountModal(null)} onSwitch={setAccountModal} onAddTransaction={() => { setAccountModal(null); setShowTransaction(true); }} onTransfer={() => { setAccountModal(null); setShowTransfer(true); }} onToggleHidden={() => { toggle(selectedAccount.id); setAccountModal(null); }} onUpdateAccount={updateAccount} onAdjustBalance={adjustAccountBalance} />}</AnimatePresence></div>
@@ -1032,6 +1035,51 @@ function DeleteTransactionModal({ transaction, onClose, onConfirm }: { transacti
 
 function List({ title, total, items, mode, onDelete }: { title: string; total: string; items: typeof personalTransactions; mode: "income" | "expense" | "neutral"; onDelete: (transaction: CashflowTransaction) => void }) {
   return <motion.div key={title} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="bg-white rounded-2xl border border-black/[0.07] shadow-[0_2px_8px_rgba(0,0,0,0.05)] overflow-hidden"><div className="flex items-center justify-between px-6 py-4 border-b border-black/[0.05]"><p className="text-base font-semibold text-[#111111]">{title}</p><span className="text-sm font-semibold text-[#111111]">{total}</span></div><div className="divide-y divide-black/[0.04]">{items.map(item => <div key={item.id} className="flex items-center gap-4 px-6 py-4"><div className={cn("size-9 rounded-xl flex items-center justify-center", mode === "income" ? "bg-[#DCFCE7]" : mode === "expense" ? "bg-[#FEF2F2]" : "bg-[#F5F5F5]")}>{mode === "income" ? <ArrowUpRight className="size-4 text-[#166534]" /> : mode === "expense" ? <ArrowDownRight className="size-4 text-[#B22222]" /> : <ArrowRightLeft className="size-4 text-[#666666]" />}</div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-[#111111]">{item.name}</p><p className="mt-0.5 truncate text-xs text-[#A3A3A3]">{item.source} · {item.note}</p></div><p className={cn("text-sm font-semibold tabular-nums", mode === "income" ? "text-[#166534]" : mode === "expense" ? "text-[#B22222]" : "text-[#111111]")}>{mode === "income" ? "+" : mode === "expense" ? "-" : ""}{formatMoney(item.amount)}</p><button title="Xóa giao dịch" aria-label="Xóa giao dịch" onClick={() => onDelete(item)} className="flex size-9 shrink-0 items-center justify-center rounded-xl text-[#A3A3A3] transition-colors hover:bg-[#FEF2F2] hover:text-[#B22222]"><Trash2 className="size-4" /></button></div>)}</div></motion.div>;
+}
+
+function PersonalTransactionHistory({ items, onDelete }: { items: CashflowTransaction[]; onDelete: (transaction: CashflowTransaction) => void }) {
+  const sortedItems = [...items].sort((a, b) => b.date.localeCompare(a.date));
+  const formatDate = (value: string) => {
+    const [year, month, day] = value.split("-");
+    return year && month && day ? `${day}/${month}/${year}` : value;
+  };
+
+  const toneOf = (item: CashflowTransaction) => {
+    if (item.status === "cancelled") return "cancelled";
+    if (item.countsAsIncome || (item.kind === "adjustment" && item.amount > 0)) return "income";
+    if (item.countsAsExpense || item.kind === "credit_card_spend" || (item.kind === "adjustment" && item.amount < 0)) return "expense";
+    return "neutral";
+  };
+
+  return <motion.div key="history" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="overflow-hidden rounded-2xl border border-black/[0.07] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.05)]">
+    <div className="flex items-center justify-between gap-4 border-b border-black/[0.05] px-5 py-4 sm:px-6">
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#A3A3A3]">Cá nhân</p>
+        <p className="text-base font-semibold text-[#111111]">Lịch sử giao dịch</p>
+      </div>
+      <span className="rounded-full bg-[#F5F5F5] px-3 py-1 text-xs font-semibold text-[#666666]">{sortedItems.length} giao dịch</span>
+    </div>
+    {sortedItems.length ? <div className="divide-y divide-black/[0.04]">{sortedItems.map((item) => {
+      const tone = toneOf(item);
+      const isIncome = tone === "income";
+      const isExpense = tone === "expense";
+      return <div key={item.id} className={cn("flex items-center gap-3 px-4 py-3.5 sm:px-6 sm:py-4", tone === "cancelled" && "bg-[#FAFAFA] opacity-60")}>
+        <div className={cn("flex size-10 shrink-0 items-center justify-center rounded-xl", isIncome ? "bg-[#DCFCE7]" : isExpense ? "bg-[#FEF2F2]" : "bg-[#F5F5F5]")}>
+          {isIncome ? <ArrowUpRight className="size-4 text-[#166534]" /> : isExpense ? <ArrowDownRight className="size-4 text-[#B22222]" /> : <ArrowRightLeft className="size-4 text-[#666666]" />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className={cn("truncate text-sm font-semibold text-[#111111]", tone === "cancelled" && "line-through")}>{item.name}</p>
+            {tone === "cancelled" && <span className="shrink-0 rounded-full bg-[#EFEFEF] px-2 py-0.5 text-[9px] font-semibold text-[#737373]">Đã hủy</span>}
+          </div>
+          <p className="mt-0.5 truncate text-xs text-[#A3A3A3]">{formatDate(item.date)} · {item.source}</p>
+          {item.note && <p className="mt-1 truncate text-xs text-[#666666]">{item.note}</p>}
+        </div>
+        <p className={cn("shrink-0 text-sm font-semibold tabular-nums", isIncome ? "text-[#166534]" : isExpense ? "text-[#B22222]" : "text-[#111111]", tone === "cancelled" && "line-through text-[#737373]")}>{isIncome ? "+" : isExpense && item.amount >= 0 ? "-" : ""}{formatMoney(Math.abs(item.amount))}</p>
+        {tone !== "cancelled" && <button title="Xóa giao dịch" aria-label="Xóa giao dịch" onClick={() => onDelete(item)} className="flex size-9 shrink-0 items-center justify-center rounded-xl text-[#A3A3A3] transition-colors hover:bg-[#FEF2F2] hover:text-[#B22222]"><Trash2 className="size-4" /></button>}
+      </div>;
+    })}</div> : <div className="px-6 py-12 text-center"><FileText className="mx-auto size-8 text-[#D4D4D4]" /><p className="mt-3 text-sm font-semibold text-[#111111]">Chưa có giao dịch Cá nhân</p><p className="mt-1 text-xs text-[#A3A3A3]">Các giao dịch thu, chi và chuyển tiền sẽ xuất hiện tại đây.</p></div>}
+  </motion.div>;
 }
 
 
