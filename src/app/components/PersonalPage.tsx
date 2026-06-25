@@ -5,7 +5,7 @@ import { cn } from "./ui/utils";
 import { WorkspaceTimeFilter, createDefaultWorkspaceTimeRange, isDateInWorkspaceRange, type WorkspaceTimeRange } from "./WorkspaceTimeFilter";
 import { QuickDateField, todayISO } from "./QuickDateField";
 import { businessSpaces, creditCards, formatMoney, investmentCash, metrics, personalAccounts, personalTransactions, savingGoals, transactionCategories, loans, type CashflowTransaction, type TransactionCategory, type TransactionType, type Loan } from "../finhomeData";
-import { finhomeStorageKeys, readStoredJson, writeStoredJson } from "../finhomeStorage";
+import { finhomeStorageKeys, readStoredJson, readStoredNumber, writeStoredJson } from "../finhomeStorage";
 
 const iconMap = { "Tiền mặt": Wallet, "Ngân hàng": Building, "Ví điện tử": Smartphone, "Ví khác": CreditCard } as const;
 type Account = typeof personalAccounts[0];
