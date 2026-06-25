@@ -45,8 +45,7 @@ function isMobileRoute() {
 }
 
 function isBusinessV2Enabled() {
-  if (typeof window === "undefined") return false;
-  return new URLSearchParams(window.location.search).get("business") === "v2";
+  return true;
 }
 
 function WebAppShell() {
