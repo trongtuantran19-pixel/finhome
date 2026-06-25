@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Sidebar, type Page } from "./components/Sidebar";
 import { FinHomeStoreProvider, useFinHomeStore } from "./finhomeStore";
@@ -44,17 +44,28 @@ function isMobileRoute() {
   return pathname === "/mobile" || new URLSearchParams(window.location.search).has("mobile");
 }
 
+function isBusinessV2Enabled() {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("business") === "v2";
+}
+
 function WebAppShell() {
   /* MARKER-MAKE-KIT-DISCOVERY-READ */
   const [activePage, setActivePage] = useState<Page>("overview");
   const { dataVersion } = useFinHomeStore();
+  const enableBusiness = isBusinessV2Enabled();
+
+  useEffect(() => {
+    if (!enableBusiness && activePage === "business") setActivePage("overview");
+  }, [activePage, enableBusiness]);
 
   const navigate = (page: Page) => {
+    if (!enableBusiness && page === "business") return;
     if (page === activePage) return;
     setActivePage(page);
   };
 
-  const PageComponent = pages[activePage];
+  const PageComponent = !enableBusiness && activePage === "business" ? OverviewPage : pages[activePage];
 
   return (
     <div
@@ -64,7 +75,7 @@ function WebAppShell() {
         background: "#F9F9F9",
       }}
     >
-      <Sidebar activePage={activePage} onNavigate={navigate} />
+      <Sidebar activePage={activePage} onNavigate={navigate} enableBusiness={enableBusiness} />
 
       <main className="relative flex-1 overflow-hidden pt-14 pb-[60px] lg:pt-0 lg:pb-0">
         <AnimatePresence mode="wait" initial={false}>

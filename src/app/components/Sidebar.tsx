@@ -26,6 +26,7 @@ const navItems: {
 interface SidebarProps {
   activePage: Page;
   onNavigate: (page: Page) => void;
+  enableBusiness?: boolean;
 }
 
 function Logo({ collapsed }: { collapsed: boolean }) {
@@ -114,9 +115,10 @@ function NavItem({
   );
 }
 
-export function Sidebar({ activePage, onNavigate }: SidebarProps) {
+export function Sidebar({ activePage, onNavigate, enableBusiness = false }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const visibleNavItems = enableBusiness ? navItems : navItems.filter((item) => item.id !== "business");
 
   return (
     <>
@@ -161,7 +163,7 @@ export function Sidebar({ activePage, onNavigate }: SidebarProps) {
               </div>
 
               <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto scrollbar-none">
-                {navItems.map(item => (
+                {visibleNavItems.map(item => (
                   <NavItem
                     key={item.id}
                     item={item}
@@ -208,7 +210,7 @@ export function Sidebar({ activePage, onNavigate }: SidebarProps) {
 
         {/* Nav */}
         <nav className={cn("flex-1 px-2.5 space-y-0.5 overflow-y-auto scrollbar-none", collapsed ? "pt-4" : "pt-1")}>
-          {navItems.map(item => (
+          {visibleNavItems.map(item => (
             <NavItem
               key={item.id}
               item={item}

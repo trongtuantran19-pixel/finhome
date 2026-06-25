@@ -2,7 +2,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { AlertCircle, Briefcase, Building, Calendar, Check, ChevronDown, ChevronUp, CreditCard, Plus, User, X } from "lucide-react";
 import { cn } from "./ui/utils";
-import { WorkspaceTimeFilter } from "./WorkspaceTimeFilter";
+import { WorkspaceTimeFilter, createDefaultWorkspaceTimeRange, isDateInWorkspaceRange, type WorkspaceTimeRange } from "./WorkspaceTimeFilter";
 import { QuickDateField, todayISO } from "./QuickDateField";
 import { creditCards, formatMoney, loans, personalAccounts, type CashflowTransaction, type Loan, type PersonalAccount } from "../finhomeData";
 import { WorkspaceTransactionHistory } from "./WorkspaceTransactionHistory";
@@ -335,7 +335,9 @@ function CreditCardPaymentModal({ card, onClose, onPay }: { card: typeof creditC
 }
 
 export function LoansPage() {
-  const loanTransactions = readStoredJson<CashflowTransaction[]>(finhomeStorageKeys.personalTransactions, []).filter((tx) => tx.id.startsWith("loan-") || tx.id.startsWith("card-") || tx.kind.startsWith("loan_") || tx.kind.startsWith("credit_card_"));
+  const [timeRange, setTimeRange] = useState<WorkspaceTimeRange>(createDefaultWorkspaceTimeRange);
+  const loanTransactions = readStoredJson<CashflowTransaction[]>(finhomeStorageKeys.personalTransactions, []).filter((tx) => tx.space === "Khoản vay" || tx.id.startsWith("loan-") || tx.id.startsWith("card-") || tx.kind.startsWith("loan_") || tx.kind.startsWith("credit_card_"));
+  const periodLoanTransactions = loanTransactions.filter((tx) => isDateInWorkspaceRange(tx.date, timeRange));
   const [filter, setFilter] = useState<Filter>("all");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [modal, setModal] = useState<LoanModal>(null);
@@ -351,7 +353,7 @@ export function LoansPage() {
   const totalDebt = activeLoans.reduce((sum, loan) => sum + loan.outstanding, 0) + creditCardDebt;
   const visibleLoans = activeLoans.filter((loan) => filter === "all" || (filter === "bank" && loan.type === "Vay ngân hàng") || (filter === "business" && loan.type === "Vay kinh doanh") || (filter === "personal" && loan.type === "Vay cá nhân"));
   const monthlyDue = activeLoans.reduce((sum, loan) => sum + loan.monthly, 0);
-  const totalInterest = loanItems.reduce((sum, loan) => sum + loan.paidInterest, 0);
+  const totalInterest = periodLoanTransactions.filter((tx) => tx.kind === "loan_interest").reduce((sum, tx) => sum + tx.amount, 0);
   const dueSoon = activeLoans.filter((loan) => ["dueSoon", "overdue"].includes(loan.status)).length;
   const selectedLoan = modal?.type === "pay" || modal?.type === "disburse" ? loanItems.find((loan) => loan.id === modal.loanId) : undefined;
   const selectedCard = modal?.type === "cardPay" ? cards.find((card) => card.id === modal.cardId) : undefined;
@@ -490,7 +492,7 @@ export function LoansPage() {
 
   return <div className="min-h-full bg-[#F9F9F9]"><div className="mx-auto max-w-[1200px] space-y-6 px-6 py-8 lg:px-8">
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-[#A3A3A3]">Nghĩa vụ nợ phải trả</p><h1 className="text-[1.75rem] font-semibold text-[#111111]">Khoản vay</h1></div><div className="flex flex-wrap items-center justify-end gap-2"><WorkspaceTimeFilter /><button onClick={() => setModal({ type: "add" })} className="flex items-center gap-1.5 rounded-xl bg-[#B22222] px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#B22222]/20"><Plus className="size-4" /> Thêm khoản vay</button></div></div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-[#A3A3A3]">Nghĩa vụ nợ phải trả</p><h1 className="text-[1.75rem] font-semibold text-[#111111]">Khoản vay</h1></div><div className="flex flex-wrap items-center justify-end gap-2"><WorkspaceTimeFilter onChange={setTimeRange} /><button onClick={() => setModal({ type: "add" })} className="flex items-center gap-1.5 rounded-xl bg-[#B22222] px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#B22222]/20"><Plus className="size-4" /> Thêm khoản vay</button></div></div>
     </motion.div>
 
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">{[["Tổng dư nợ", formatMoney(totalDebt), "text-[#B22222]"], ["Đang hoạt động", `${activeLoans.length}`, "text-[#111111]"], ["Phải trả tháng này", formatMoney(monthlyDue), "text-[#B45309]"], ["Tổng lãi đã trả", formatMoney(totalInterest), "text-[#B45309]"], ["Sắp đến hạn", `${dueSoon}`, "text-[#DC2626]"], ["Dư nợ thẻ", formatMoney(creditCardDebt), "text-[#DC2626]"]].map(([label, value, color]) => <div key={label} className="rounded-2xl border border-black/[0.07] bg-white p-4"><p className="mb-2 text-[10px] font-semibold uppercase text-[#A3A3A3]">{label}</p><p className={cn("text-lg font-semibold", color)}>{value}</p></div>)}</div>
@@ -513,7 +515,7 @@ export function LoansPage() {
       const pct = card.limit > 0 ? Math.round((card.used / card.limit) * 100) : 0;
       return <div key={card.id} className="rounded-2xl border border-black/[0.07] bg-white p-5"><div className="mb-4 rounded-2xl p-5 text-white" style={{ background: card.color }}><p className="text-xs text-white/50">Thẻ tín dụng</p><p className="font-semibold">{card.name}</p><p className="mt-6 text-xl font-semibold">{formatMoney(card.used)}</p><p className="text-xs text-white/45">Hạn mức {formatMoney(card.limit)} · còn {formatMoney(Math.max(0, card.limit - card.used))}</p><p className="text-xs text-white/40">•••• {card.last4}</p></div><div className="mb-1 flex justify-between text-xs"><span>Hạn mức đã dùng</span><span>{pct}%</span></div><div className="mb-4 h-1.5 rounded-full bg-[#F5F5F5]"><div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: card.color }} /></div><p className="text-xs text-[#666666]">Đến hạn {shortDate(card.dueDate)}. Khi thanh toán chỉ giảm dư nợ thẻ, không ghi nhận chi tiêu lần hai.</p><button onClick={() => setModal({ type: "cardPay", cardId: card.id })} className="mt-4 w-full rounded-xl bg-[#111111] px-3.5 py-2.5 text-xs font-semibold text-white">Thanh toán thẻ tín dụng</button></div>;
     })}</div>}
-    <WorkspaceTransactionHistory title="Lịch sử giao dịch Khoản vay" subtitle="Giải ngân, trả gốc, trả lãi và thanh toán thẻ tín dụng." transactions={loanTransactions} />
+    <WorkspaceTransactionHistory title="Lịch sử giao dịch Khoản vay" subtitle="Giải ngân, trả gốc, trả lãi và thanh toán thẻ tín dụng." transactions={periodLoanTransactions} />
   </div>
 
   <AnimatePresence>

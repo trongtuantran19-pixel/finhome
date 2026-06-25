@@ -1,8 +1,8 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Plus, Target, Calendar, TrendingUp, CheckCircle2, ArrowDown, ArrowUp, X, Landmark, PiggyBank, WalletCards, Check, ChevronRight } from "lucide-react";
+import { Plus, Target, Calendar, TrendingUp, CheckCircle2, ArrowDown, ArrowUp, X, Landmark, PiggyBank, WalletCards, Check, ChevronRight, SlidersHorizontal } from "lucide-react";
 import { cn } from "./ui/utils";
-import { WorkspaceTimeFilter } from "./WorkspaceTimeFilter";
+import { WorkspaceTimeFilter, createDefaultWorkspaceTimeRange, isDateInWorkspaceRange, type WorkspaceTimeRange } from "./WorkspaceTimeFilter";
 import { QuickDateField, todayISO } from "./QuickDateField";
 import { formatMoney, interestSavings as initialInterestSavings, metrics, personalAccounts, savingGoals as initialSavingGoals, type CashflowTransaction, type InterestSaving, type PersonalAccount, type SavingGoal } from "../finhomeData";
 import { WorkspaceTransactionHistory } from "./WorkspaceTransactionHistory";
@@ -244,14 +244,119 @@ function SettlementModalView({ saving, onClose, onConfirm }: { saving: InterestS
   </motion.div>;
 }
 
+
+function AdjustSavingsModal({
+  goals,
+  interestList,
+  onClose,
+  onConfirm,
+}: {
+  goals: SavingGoal[];
+  interestList: InterestSaving[];
+  onClose: () => void;
+  onConfirm: (payload:
+    | { type: "goal"; id: string; current: number; target: number; monthly: number; date: string; note: string }
+    | { type: "interest"; id: string; principal: number; annualRate: number; termMonths: number; expectedInterest: number; maturity: string; date: string; note: string }
+  ) => void;
+}) {
+  const activeGoals = goals.filter((goal) => !["hidden", "closed"].includes(goal.status));
+  const activeInterest = interestList.filter((saving) => !["hidden", "closed", "settled"].includes(saving.status));
+  const [mode, setMode] = useState<"goal" | "interest">(activeGoals.length ? "goal" : "interest");
+  const [goalId, setGoalId] = useState(activeGoals[0]?.id ?? "");
+  const [interestId, setInterestId] = useState(activeInterest[0]?.id ?? "");
+  const selectedGoal = activeGoals.find((goal) => goal.id === goalId);
+  const selectedInterest = activeInterest.find((saving) => saving.id === interestId);
+  const [current, setCurrent] = useState(String(selectedGoal?.current ?? 0));
+  const [target, setTarget] = useState(String(selectedGoal?.target ?? 0));
+  const [monthly, setMonthly] = useState(String(selectedGoal?.monthly ?? 0));
+  const [principal, setPrincipal] = useState(String(selectedInterest?.principal ?? 0));
+  const [rate, setRate] = useState(String(selectedInterest?.annualRate ?? 0));
+  const [term, setTerm] = useState(String(selectedInterest?.termMonths ?? 0));
+  const [expectedInterest, setExpectedInterest] = useState(String(selectedInterest?.expectedInterest ?? 0));
+  const [maturity, setMaturity] = useState(selectedInterest?.maturity ?? todayISO());
+  const [date, setDate] = useState(todayISO());
+  const [note, setNote] = useState("");
+
+  function chooseGoal(id: string) {
+    const goal = activeGoals.find((item) => item.id === id);
+    setGoalId(id);
+    setCurrent(String(goal?.current ?? 0));
+    setTarget(String(goal?.target ?? 0));
+    setMonthly(String(goal?.monthly ?? 0));
+  }
+
+  function chooseInterest(id: string) {
+    const saving = activeInterest.find((item) => item.id === id);
+    setInterestId(id);
+    setPrincipal(String(saving?.principal ?? 0));
+    setRate(String(saving?.annualRate ?? 0));
+    setTerm(String(saving?.termMonths ?? 0));
+    setExpectedInterest(String(saving?.expectedInterest ?? 0));
+    setMaturity(saving?.maturity ?? todayISO());
+  }
+
+  const goalCurrent = parseNumber(current);
+  const goalTarget = parseNumber(target);
+  const goalMonthly = parseNumber(monthly);
+  const interestPrincipal = parseNumber(principal);
+  const interestRate = Number(rate) || 0;
+  const interestTerm = Number(term) || 0;
+  const interestExpected = parseNumber(expectedInterest);
+  const canSave = mode === "goal" ? Boolean(selectedGoal) : Boolean(selectedInterest);
+
+  return <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 p-0 backdrop-blur-sm sm:items-center sm:p-4" onClick={onClose}>
+    <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }} className="flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:rounded-[28px]" onClick={(event) => event.stopPropagation()}>
+      <div className="flex-shrink-0 px-5 pb-3 pt-5">
+        <div className="flex items-start justify-between gap-4">
+          <div><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#A3A3A3]">Không gian tiết kiệm</p><h2 className="mt-1 text-xl font-semibold text-[#111111]">Điều chỉnh tiết kiệm</h2><p className="mt-1 text-xs leading-relaxed text-[#737373]">Dùng khi nhập sai số dư, mục tiêu hoặc thông tin khoản gửi. Không tính là nạp/rút thật.</p></div>
+          <button onClick={onClose} className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#F5F5F5] text-[#A3A3A3] hover:bg-[#EFEFEF]"><X className="size-4" /></button>
+        </div>
+      </div>
+
+      <div className="flex-1 space-y-4 overflow-y-auto px-5 pb-4">
+        <div className="grid grid-cols-2 rounded-2xl bg-[#F5F5F5] p-1.5">
+          <button type="button" onClick={() => { setMode("goal"); if (!goalId && activeGoals[0]) chooseGoal(activeGoals[0].id); }} className={cn("rounded-xl px-3 py-2.5 text-sm font-semibold transition", mode === "goal" ? "bg-white text-[#111111] shadow-sm" : "text-[#737373]")}>Mục tiêu</button>
+          <button type="button" onClick={() => { setMode("interest"); if (!interestId && activeInterest[0]) chooseInterest(activeInterest[0].id); }} className={cn("rounded-xl px-3 py-2.5 text-sm font-semibold transition", mode === "interest" ? "bg-white text-[#111111] shadow-sm" : "text-[#737373]")}>Sinh lãi</button>
+        </div>
+
+        {mode === "goal" ? <>
+          <div><label className={labelClass}>Chọn mục tiêu</label><div className="mt-2 space-y-2">{activeGoals.map((goal) => <button key={goal.id} type="button" onClick={() => chooseGoal(goal.id)} className={cn("flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left", goal.id === goalId ? "border-[#B22222] bg-[#FDECEC] text-[#B22222]" : "border-black/[0.08] bg-white text-[#111111]")}><span><span className="block text-sm font-semibold">{goal.name}</span><span className="text-xs text-[#A3A3A3]">{formatMoney(goal.current)} / {formatMoney(goal.target)}</span></span>{goal.id === goalId && <Check className="size-4" />}</button>)}</div></div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><label className={labelClass}>Số tiền hiện có thực tế</label><input className={cn(inputClass, "mt-2")} value={current} inputMode="numeric" onChange={(event) => setCurrent(event.target.value)} /></div><div><label className={labelClass}>Số tiền mục tiêu thực tế</label><input className={cn(inputClass, "mt-2")} value={target} inputMode="numeric" onChange={(event) => setTarget(event.target.value)} /></div></div>
+          <div><label className={labelClass}>Cần góp mỗi tháng</label><input className={cn(inputClass, "mt-2")} value={monthly} inputMode="numeric" onChange={(event) => setMonthly(event.target.value)} /></div>
+        </> : <>
+          <div><label className={labelClass}>Chọn khoản sinh lãi</label><div className="mt-2 space-y-2">{activeInterest.map((saving) => <button key={saving.id} type="button" onClick={() => chooseInterest(saving.id)} className={cn("flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left", saving.id === interestId ? "border-[#B22222] bg-[#FDECEC] text-[#B22222]" : "border-black/[0.08] bg-white text-[#111111]")}><span><span className="block text-sm font-semibold">{saving.name}</span><span className="text-xs text-[#A3A3A3]">{saving.bank} · {formatMoney(saving.principal)}</span></span>{saving.id === interestId && <Check className="size-4" />}</button>)}</div></div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><label className={labelClass}>Số tiền gốc thực tế</label><input className={cn(inputClass, "mt-2")} value={principal} inputMode="numeric" onChange={(event) => setPrincipal(event.target.value)} /></div><div><label className={labelClass}>Lãi dự kiến thực tế</label><input className={cn(inputClass, "mt-2")} value={expectedInterest} inputMode="numeric" onChange={(event) => setExpectedInterest(event.target.value)} /></div></div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><label className={labelClass}>Lãi suất %/năm</label><input className={cn(inputClass, "mt-2")} value={rate} inputMode="decimal" onChange={(event) => setRate(event.target.value)} /></div><div><label className={labelClass}>Kỳ hạn tháng</label><input className={cn(inputClass, "mt-2")} value={term} inputMode="numeric" onChange={(event) => setTerm(event.target.value)} /></div></div>
+          <div><label className={labelClass}>Ngày đáo hạn</label><QuickDateField value={maturity} onChange={setMaturity} /></div>
+        </>}
+
+        <QuickDateField label="Ngày điều chỉnh" value={date} onChange={setDate} variant="chip" />
+        <div><label className={labelClass}>Ghi chú</label><textarea className={cn(inputClass, "mt-2 min-h-16")} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi chú" /></div>
+        <div className="rounded-2xl bg-[#F9F6F1] px-4 py-3 text-xs leading-relaxed text-[#666666]">Điều chỉnh chỉ sửa số liệu tiết kiệm, không làm thay đổi ví cá nhân và không tính là thu nhập hoặc chi tiêu.</div>
+      </div>
+
+      <div className="grid flex-shrink-0 grid-cols-2 gap-3 border-t border-black/[0.06] bg-white px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3">
+        <button onClick={onClose} className="h-12 rounded-2xl border border-black/[0.1] bg-white text-sm font-semibold text-[#111111]">Hủy</button>
+        <button disabled={!canSave} onClick={() => {
+          if (mode === "goal") onConfirm({ type: "goal", id: goalId, current: goalCurrent, target: goalTarget, monthly: goalMonthly, date, note });
+          else onConfirm({ type: "interest", id: interestId, principal: interestPrincipal, annualRate: interestRate, termMonths: interestTerm, expectedInterest: interestExpected, maturity, date, note });
+        }} className="h-12 rounded-2xl bg-[#B22222] text-sm font-semibold text-white shadow-lg shadow-[#B22222]/20 disabled:bg-[#D4D4D4] disabled:shadow-none">Lưu điều chỉnh</button>
+      </div>
+    </motion.div>
+  </motion.div>;
+}
+
 export function SavingsPage() {
-  const savingsTransactions = readStoredJson<CashflowTransaction[]>(finhomeStorageKeys.personalTransactions, []).filter((tx) => tx.id.startsWith("saving-") || tx.kind === "savings_interest");
+  const [timeRange, setTimeRange] = useState<WorkspaceTimeRange>(createDefaultWorkspaceTimeRange);
+  const savingsTransactions = readStoredJson<CashflowTransaction[]>(finhomeStorageKeys.personalTransactions, []).filter((tx) => tx.space === "Tiết kiệm" || tx.id.startsWith("saving-") || tx.kind === "savings_interest");
+  const periodSavingsTransactions = savingsTransactions.filter((tx) => isDateInWorkspaceRange(tx.date, timeRange));
   const [goals, setGoals] = useState<SavingGoal[]>(() => readStoredJson(SAVINGS_STORAGE_KEYS.goals, initialSavingGoals));
   const [interestList, setInterestList] = useState<InterestSaving[]>(() => readStoredJson(SAVINGS_STORAGE_KEYS.interest, initialInterestSavings));
   const [modal, setModal] = useState<SavingsModal>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [settlement, setSettlement] = useState<SettlementModal>(null);
   const [topUp, setTopUp] = useState<TopUpModal>(null);
+  const [adjustOpen, setAdjustOpen] = useState(false);
   useEffect(() => writeStoredJson(SAVINGS_STORAGE_KEYS.goals, goals), [goals]);
   useEffect(() => writeStoredJson(SAVINGS_STORAGE_KEYS.interest, interestList), [interestList]);
 
@@ -331,6 +436,69 @@ export function SavingsPage() {
     setTopUp(null);
   }
 
+
+  function adjustSavings(payload:
+    | { type: "goal"; id: string; current: number; target: number; monthly: number; date: string; note: string }
+    | { type: "interest"; id: string; principal: number; annualRate: number; termMonths: number; expectedInterest: number; maturity: string; date: string; note: string }
+  ) {
+    if (payload.type === "goal") {
+      const nextGoals = goals.map((goal) => {
+        if (goal.id !== payload.id) return goal;
+        const nextCurrent = Math.max(0, payload.current);
+        const nextTarget = Math.max(0, payload.target);
+        return {
+          ...goal,
+          current: nextCurrent,
+          target: nextTarget,
+          monthly: Math.max(0, payload.monthly),
+          status: nextTarget > 0 && nextCurrent >= nextTarget ? "completed" : goal.status === "completed" ? "active" : goal.status,
+        };
+      });
+      setGoals(nextGoals);
+      writeStoredJson(SAVINGS_STORAGE_KEYS.goals, nextGoals);
+      const goal = goals.find((item) => item.id === payload.id);
+      appendPersonalTransaction({
+        id: `saving-adjust-${Date.now()}`,
+        date: payload.date,
+        name: `Điều chỉnh ${goal?.name ?? "mục tiêu tiết kiệm"}`,
+        space: "Tiết kiệm",
+        source: goal?.name ?? "Tiết kiệm mục tiêu",
+        amount: 0,
+        kind: "adjustment",
+        status: "active",
+        note: payload.note.trim() || "Điều chỉnh số liệu tiết kiệm mục tiêu, không tính thu nhập/chi tiêu",
+        countsAsIncome: false,
+        countsAsExpense: false,
+      });
+    } else {
+      const nextInterestList = interestList.map((saving) => saving.id === payload.id ? {
+        ...saving,
+        principal: Math.max(0, payload.principal),
+        annualRate: Math.max(0, payload.annualRate),
+        termMonths: Math.max(0, payload.termMonths),
+        expectedInterest: Math.max(0, payload.expectedInterest),
+        maturity: payload.maturity,
+      } : saving);
+      setInterestList(nextInterestList);
+      writeStoredJson(SAVINGS_STORAGE_KEYS.interest, nextInterestList);
+      const saving = interestList.find((item) => item.id === payload.id);
+      appendPersonalTransaction({
+        id: `saving-adjust-${Date.now()}`,
+        date: payload.date,
+        name: `Điều chỉnh ${saving?.name ?? "tiết kiệm sinh lãi"}`,
+        space: "Tiết kiệm",
+        source: saving?.name ?? "Tiết kiệm sinh lãi",
+        amount: 0,
+        kind: "adjustment",
+        status: "active",
+        note: payload.note.trim() || "Điều chỉnh số liệu tiết kiệm sinh lãi, không tính thu nhập/chi tiêu",
+        countsAsIncome: false,
+        countsAsExpense: false,
+      });
+    }
+    setAdjustOpen(false);
+  }
+
   function settleSaving(accountId: string, interestAmount: number, date: string, earlySettlement: boolean) {
     if (!settlement) return;
     const accounts = loadPersonalAccounts();
@@ -376,7 +544,7 @@ export function SavingsPage() {
 
   return <div className="min-h-full bg-[#F9F9F9]"><div className="mx-auto max-w-[1200px] space-y-6 px-6 py-8 lg:px-8">
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-[#A3A3A3]">Không gian tiết kiệm độc lập</p><h1 className="text-[1.75rem] font-semibold text-[#111111]">Tiết kiệm</h1><p className="mt-1 text-sm text-[#737373]">Tách rõ mục tiêu tiết kiệm và khoản gửi ngân hàng sinh lãi.</p></div><div className="flex flex-wrap items-center justify-end gap-2"><WorkspaceTimeFilter /><button onClick={() => setAddOpen(true)} className="flex items-center gap-2 rounded-2xl bg-[#B22222] px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-[#B22222]/20"><Plus className="size-4" /> Thêm tiết kiệm</button></div></div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-[#A3A3A3]">Không gian tiết kiệm độc lập</p><h1 className="text-[1.75rem] font-semibold text-[#111111]">Tiết kiệm</h1><p className="mt-1 text-sm text-[#737373]">Tách rõ mục tiêu tiết kiệm và khoản gửi ngân hàng sinh lãi.</p></div><div className="flex flex-wrap items-center justify-end gap-2"><WorkspaceTimeFilter onChange={setTimeRange} /><button onClick={() => setAdjustOpen(true)} className="flex items-center gap-2 rounded-2xl border border-black/[0.1] bg-white px-4 py-3 text-sm font-semibold text-[#111111]"><SlidersHorizontal className="size-4" /> Điều chỉnh</button><button onClick={() => setAddOpen(true)} className="flex items-center gap-2 rounded-2xl bg-[#B22222] px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-[#B22222]/20"><Plus className="size-4" /> Thêm tiết kiệm</button></div></div>
     </motion.div>
 
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{[
@@ -392,9 +560,10 @@ export function SavingsPage() {
     <section className="space-y-4"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#A3A3A3]">Loại 1</p><h2 className="mt-1 text-xl font-semibold text-[#111111]">Tiết kiệm mục tiêu</h2></div><div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{activeGoals.map((goal, index) => { const pct = goal.target ? Math.min(100, Math.round(goal.current / goal.target * 100)) : 0; const done = goal.status === "completed" || pct >= 100; return <motion.div key={goal.id} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04 }} className="rounded-[24px] border border-black/[0.07] bg-white p-5 shadow-sm"><div className="mb-5 flex items-start justify-between"><div><p className="text-base font-semibold text-[#111111]">{goal.name}</p><p className="mt-1 text-xs text-[#A3A3A3]">{displayDate(goal.start)} · mục tiêu {displayDate(goal.due)}</p></div><span className={cn("rounded-full px-2.5 py-1 text-[10px] font-semibold", done ? "bg-[#DCFCE7] text-[#166534]" : goal.status === "paused" ? "bg-[#FEF3C7] text-[#92400E]" : "bg-[#F5F5F5] text-[#666666]")}>{done ? "Đã hoàn thành" : goal.status === "paused" ? "Tạm dừng" : "Đang tiết kiệm"}</span></div><div className="mb-3 flex items-end justify-between"><div><p className="mb-1 text-[10px] font-semibold uppercase text-[#A3A3A3]">Hiện có</p><p className="text-2xl font-semibold text-[#111111]">{formatMoney(goal.current)}</p></div><div className="text-right"><p className="mb-1 text-[10px] font-semibold uppercase text-[#A3A3A3]">Mục tiêu</p><p className="text-sm font-semibold text-[#666666]">{formatMoney(goal.target)}</p></div></div><div className="mb-4"><div className="mb-1 flex justify-between text-xs"><span className="font-semibold text-[#B22222]">{pct}%</span><span className="text-[#A3A3A3]">Còn thiếu {formatMoney(Math.max(0, goal.target - goal.current))}</span></div><div className="h-2 rounded-full bg-[#F5F5F5]"><div className="h-full rounded-full bg-[#B22222]" style={{ width: `${pct}%` }} /></div></div><div className="flex items-center justify-between border-t border-black/[0.05] pt-3"><div><p className="text-[10px] font-semibold uppercase text-[#A3A3A3]">Cần góp mỗi tháng</p><p className="text-xs font-semibold">{formatMoney(goal.monthly)}</p></div><div className="flex gap-1.5"><button onClick={() => setModal({ type: "deposit", goalId: goal.id })} className="flex items-center gap-1 rounded-xl bg-[#F0FDF4] px-3 py-2 text-[11px] font-semibold text-[#166534]"><ArrowDown className="size-3" /> Nạp</button><button onClick={() => setModal({ type: "withdraw", goalId: goal.id })} className="flex items-center gap-1 rounded-xl bg-[#FEF2F2] px-3 py-2 text-[11px] font-semibold text-[#B22222]"><ArrowUp className="size-3" /> Rút</button></div></div></motion.div>; })}</div></section>
 
     <section className="space-y-4"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#A3A3A3]">Loại 2</p><h2 className="mt-1 text-xl font-semibold text-[#111111]">Tiết kiệm sinh lãi</h2></div><div className="grid grid-cols-1 gap-4 lg:grid-cols-2">{activeInterest.map((saving, index) => { const expectedTotal = saving.principal + saving.expectedInterest; return <motion.div key={saving.id} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04 }} className="rounded-[24px] border border-black/[0.07] bg-white p-5 shadow-sm"><div className="mb-5 flex items-start justify-between"><div className="flex gap-3"><div className="flex size-12 items-center justify-center rounded-2xl bg-[#F8F5F0] text-[#B22222]"><Landmark className="size-5" /></div><div><p className="text-base font-semibold text-[#111111]">{saving.name}</p><p className="mt-1 text-xs text-[#A3A3A3]">{saving.bank} · kỳ hạn {saving.termMonths} tháng</p></div></div><span className="rounded-full bg-[#DCFCE7] px-2.5 py-1 text-[10px] font-semibold text-[#166534]">Đang gửi</span></div><div className="grid grid-cols-2 gap-3"><div className="rounded-2xl bg-[#F8F5F0] p-4"><p className="text-xs text-[#737373]">Số tiền gốc</p><p className="mt-1 text-lg font-semibold text-[#111111]">{formatMoney(saving.principal)}</p></div><div className="rounded-2xl bg-[#F8F5F0] p-4"><p className="text-xs text-[#737373]">Lãi suất</p><p className="mt-1 text-lg font-semibold text-[#111111]">{saving.annualRate}%/năm</p></div><div className="rounded-2xl bg-[#F8F5F0] p-4"><p className="text-xs text-[#737373]">Ngày đáo hạn</p><p className="mt-1 text-sm font-semibold text-[#111111]">{displayDate(saving.maturity)}</p></div><div className="rounded-2xl bg-[#F8F5F0] p-4"><p className="text-xs text-[#737373]">Lãi dự kiến</p><p className="mt-1 text-sm font-semibold text-[#B22222]">{formatMoney(saving.expectedInterest)}</p></div></div><div className="mt-4 flex items-center justify-between rounded-2xl bg-[#111111] px-4 py-3 text-white"><div><p className="text-xs text-white/60">Tổng nhận dự kiến</p><p className="text-xl font-semibold">{formatMoney(expectedTotal)}</p></div><button onClick={() => setSettlement(saving)} className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-[#111111]">Tất toán</button></div>{saving.allowTopUp && <button onClick={() => setTopUp(saving)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-black/[0.08] py-3 text-sm font-semibold text-[#111111]"><WalletCards className="size-4" /> Gửi thêm</button>}</motion.div>; })}</div></section>
-    <WorkspaceTransactionHistory title="Lịch sử giao dịch Tiết kiệm" subtitle="Nạp, rút, gửi thêm, tất toán và nhận lãi tiết kiệm." transactions={savingsTransactions} />
+    <WorkspaceTransactionHistory title="Lịch sử giao dịch Tiết kiệm" subtitle="Nạp, rút, gửi thêm, tất toán và nhận lãi tiết kiệm." transactions={periodSavingsTransactions} />
   </div>
   <AnimatePresence>{modal && selectedGoal && <SavingsActionModal modal={modal} goal={selectedGoal} onClose={() => setModal(null)} onConfirm={updateGoalAmount} />}</AnimatePresence>
+  <AnimatePresence>{adjustOpen && <AdjustSavingsModal goals={goals} interestList={interestList} onClose={() => setAdjustOpen(false)} onConfirm={adjustSavings} />}</AnimatePresence>
   <AnimatePresence>{addOpen && <AddSavingsModal onClose={() => setAddOpen(false)} onAddGoal={(goal) => { setGoals((current) => [goal, ...current]); setAddOpen(false); }} onAddInterest={(saving) => { setInterestList((current) => [saving, ...current]); setAddOpen(false); }} />}</AnimatePresence>
   <AnimatePresence>{settlement && <SettlementModalView saving={settlement} onClose={() => setSettlement(null)} onConfirm={settleSaving} />}</AnimatePresence>
   <AnimatePresence>{topUp && <InterestTopUpModal saving={topUp} onClose={() => setTopUp(null)} onConfirm={topUpInterestSaving} />}</AnimatePresence>

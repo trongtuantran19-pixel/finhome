@@ -4,7 +4,8 @@ import { CalendarDays, Check, ChevronDown, X } from "lucide-react";
 import { cn } from "./ui/utils";
 import { QuickDateField } from "./QuickDateField";
 
-type PeriodValue = "week" | "month" | "year" | "custom";
+export type PeriodValue = "week" | "month" | "year" | "custom";
+export type WorkspaceTimeRange = { period: PeriodValue; from: string; to: string };
 
 type WorkspaceTimeFilterProps = {
   className?: string;
@@ -42,6 +43,15 @@ function rangeFor(period: PeriodValue, customFrom: string, customTo: string) {
   if (period === "month") return { from: toISO(new Date(now.getFullYear(), now.getMonth(), 1)), to: todayISO() };
   if (period === "year") return { from: toISO(new Date(now.getFullYear(), 0, 1)), to: todayISO() };
   return { from: customFrom, to: customTo };
+}
+
+export function createDefaultWorkspaceTimeRange(): WorkspaceTimeRange {
+  const range = rangeFor("month", "", "");
+  return { period: "month", ...range };
+}
+
+export function isDateInWorkspaceRange(date: string, range: WorkspaceTimeRange) {
+  return Boolean(date) && date >= range.from && date <= range.to;
 }
 
 function displayDate(value: string) {

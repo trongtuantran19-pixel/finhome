@@ -1,8 +1,8 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowRightLeft, BarChart2, DollarSign, Plus, TrendingUp, X } from "lucide-react";
+import { ArrowRightLeft, BarChart2, DollarSign, Plus, SlidersHorizontal, TrendingUp, X } from "lucide-react";
 import { cn } from "./ui/utils";
-import { WorkspaceTimeFilter } from "./WorkspaceTimeFilter";
+import { WorkspaceTimeFilter, createDefaultWorkspaceTimeRange, isDateInWorkspaceRange, type WorkspaceTimeRange } from "./WorkspaceTimeFilter";
 import { QuickDateField, todayISO } from "./QuickDateField";
 import { WorkspaceTransactionHistory } from "./WorkspaceTransactionHistory";
 import { FormSelect } from "./FormSelect";
@@ -24,7 +24,7 @@ import {
   writeStoredNumber,
 } from "../finhomeStorage";
 
-type ModalKind = "transfer" | "buy" | "sell" | "proceeds" | null;
+type ModalKind = "transfer" | "buy" | "sell" | "adjust" | "proceeds" | null;
 type PendingSale = {
   holdingId: string;
   quantity: number;
@@ -156,9 +156,12 @@ function TransferModal({ cash, onClose, onConfirm }: { cash: number; onClose: ()
   );
 }
 
-function BuyModal({ cash, onClose, onConfirm }: { cash: number; onClose: () => void; onConfirm: (payload: { code: string; name: string; type: string; quantity: number; price: number; fee: number; date: string }) => void }) {
-  const [code, setCode] = useState("FPT");
-  const [name, setName] = useState("Cổ phiếu FPT");
+function BuyModal({ cash, holdings, onClose, onConfirm }: { cash: number; holdings: InvestmentHolding[]; onClose: () => void; onConfirm: (payload: { mode: "new" | "add"; holdingId?: string; code: string; name: string; type: string; quantity: number; price: number; fee: number; date: string }) => void }) {
+  const [mode, setMode] = useState<"new" | "add">("new");
+  const [holdingId, setHoldingId] = useState(holdings[0]?.id ?? "");
+  const selectedHolding = holdings.find((item) => item.id === holdingId);
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
   const [assetType, setAssetType] = useState("Cổ phiếu");
   const [quantity, setQuantity] = useState("1");
   const [price, setPrice] = useState("0");
@@ -168,28 +171,32 @@ function BuyModal({ cash, onClose, onConfirm }: { cash: number; onClose: () => v
   const unitPrice = parseMoney(price);
   const feeValue = parseMoney(fee);
   const total = qty * unitPrice + feeValue;
-  const canSave = code.trim().length > 0 && name.trim().length > 0 && qty > 0 && unitPrice > 0 && total <= cash;
+  const normalizedCode = (mode === "add" ? selectedHolding?.code : code).trim().toUpperCase();
+  const duplicate = mode === "new" && holdings.some((item) => item.status === "holding" && item.code.toUpperCase() === normalizedCode);
+  const hasProduct = mode === "add" ? Boolean(selectedHolding) : normalizedCode.length > 0 && name.trim().length > 0;
+  const canSave = hasProduct && !duplicate && qty > 0 && unitPrice > 0 && total <= cash;
 
   return (
-    <Modal title="Mua khoản đầu tư" sub="Mua đầu tư không phải chi tiêu cá nhân." onClose={onClose}>
+    <Modal title="Mua khoản đầu tư" sub="Mua tài sản không được tính là chi tiêu cá nhân." onClose={onClose}>
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Mã đầu tư"><input className={inputClass} value={code} onChange={(event) => setCode(event.target.value)} /></Field>
-          <Field label="Loại tài sản"><input className={inputClass} value={assetType} onChange={(event) => setAssetType(event.target.value)} /></Field>
+        <div className="grid grid-cols-2 rounded-2xl bg-[#F5F5F5] p-1">
+          <button type="button" onClick={() => setMode("new")} className={cn("rounded-xl px-4 py-2.5 text-sm font-semibold transition", mode === "new" ? "bg-white text-[#111111] shadow-sm" : "text-[#737373]")}>Mua mới</button>
+          <button type="button" onClick={() => setMode("add")} className={cn("rounded-xl px-4 py-2.5 text-sm font-semibold transition", mode === "add" ? "bg-white text-[#111111] shadow-sm" : "text-[#737373]")}>Mua thêm</button>
         </div>
-        <Field label="Tên khoản đầu tư"><input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} /></Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Số lượng"><input className={inputClass} value={quantity} inputMode="decimal" onChange={(event) => setQuantity(event.target.value)} /></Field>
-          <Field label="Giá mua / đơn vị"><input className={inputClass} value={price} inputMode="numeric" onChange={(event) => setPrice(event.target.value)} /></Field>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Phí mua"><input className={inputClass} value={fee} inputMode="numeric" onChange={(event) => setFee(event.target.value)} /></Field>
-          <QuickDateField value={date} onChange={setDate} />
-        </div>
-        <p className={cn("rounded-2xl px-4 py-3 text-sm", total > cash ? "bg-[#FEF2F2] text-[#B22222]" : "bg-[#F8F6F3] text-[#666666]")}>
-          {total > cash ? "Tiền mặt đầu tư không đủ để mua." : `Tiền mặt đầu tư giảm ${formatMoney(total)}; vốn đầu tư tăng ${formatMoney(total)}. Không tênh chi tiêu cá nhân.`}
-        </p>
-        <button disabled={!canSave} onClick={() => { onConfirm({ code: code.trim().toUpperCase(), name: name.trim(), type: assetType.trim() || "Khác", quantity: qty, price: unitPrice, fee: feeValue, date }); onClose(); }} className="w-full rounded-2xl bg-[#111111] py-3 font-semibold text-white disabled:bg-[#D4D4D4]">Xác nhận mua</button>
+
+        {mode === "add" ? <>
+          <Field label="Khoản đầu tư đang nắm giữ"><FormSelect title="Chọn khoản đầu tư" value={holdingId} onChange={setHoldingId} options={holdings.map((item) => ({ value: item.id, label: `${item.code} · ${item.name}`, sub: `${item.quantity} đơn vị · giá vốn ${formatMoney(item.avgCost)}` }))} /></Field>
+          {selectedHolding && <div className="grid grid-cols-2 gap-3 rounded-2xl bg-[#F8F6F3] p-4"><div><p className="text-[10px] font-semibold uppercase text-[#A3A3A3]">Số lượng hiện có</p><p className="mt-1 font-semibold">{selectedHolding.quantity}</p></div><div><p className="text-[10px] font-semibold uppercase text-[#A3A3A3]">Vốn hiện tại</p><p className="mt-1 font-semibold">{formatMoney(selectedHolding.remainingCapital)}</p></div></div>}
+        </> : <>
+          <div className="grid grid-cols-2 gap-3"><Field label="Mã đầu tư"><input className={inputClass} value={code} onChange={(event) => setCode(event.target.value)} placeholder="Ví dụ: FPT" /></Field><Field label="Loại tài sản"><input className={inputClass} value={assetType} onChange={(event) => setAssetType(event.target.value)} /></Field></div>
+          <Field label="Tên khoản đầu tư"><input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} placeholder="Ví dụ: Cổ phiếu FPT" /></Field>
+          {duplicate && <p className="rounded-2xl bg-[#FEF2F2] px-4 py-3 text-sm font-medium text-[#B22222]">Mã này đang tồn tại. Hãy chọn “Mua thêm” để cập nhật khoản đang nắm giữ.</p>}
+        </>}
+
+        <div className="grid grid-cols-2 gap-3"><Field label="Số lượng"><input className={inputClass} value={quantity} inputMode="decimal" onChange={(event) => setQuantity(event.target.value)} /></Field><Field label="Giá mua / đơn vị"><input className={inputClass} value={price} inputMode="numeric" onChange={(event) => setPrice(event.target.value)} /></Field></div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><Field label="Phí mua"><input className={inputClass} value={fee} inputMode="numeric" onChange={(event) => setFee(event.target.value)} /></Field><QuickDateField value={date} onChange={setDate} /></div>
+        <p className={cn("rounded-2xl px-4 py-3 text-sm", total > cash ? "bg-[#FEF2F2] text-[#B22222]" : "bg-[#F8F6F3] text-[#666666]")}>{total > cash ? "Tiền mặt đầu tư không đủ để mua." : `Tiền mặt đầu tư giảm ${formatMoney(total)}. ${mode === "add" ? "Số lượng và giá vốn bình quân sẽ được cập nhật." : "Một khoản đầu tư mới sẽ được tạo."}`}</p>
+        <button disabled={!canSave} onClick={() => { const item = selectedHolding; onConfirm({ mode, holdingId: mode === "add" ? holdingId : undefined, code: mode === "add" ? item?.code ?? "" : normalizedCode, name: mode === "add" ? item?.name ?? "" : name.trim(), type: mode === "add" ? item?.type ?? "Khác" : assetType.trim() || "Khác", quantity: qty, price: unitPrice, fee: feeValue, date }); onClose(); }} className="w-full rounded-2xl bg-[#111111] py-3 font-semibold text-white disabled:bg-[#D4D4D4]">{mode === "add" ? "Xác nhận mua thêm" : "Xác nhận mua mới"}</button>
       </div>
     </Modal>
   );
@@ -230,6 +237,96 @@ function SellModal({ holdings, onClose, onContinue }: { holdings: InvestmentHold
           <p>Lãi/lỗ đã chốt: <b className={realizedPL >= 0 ? "text-[#166534]" : "text-[#B22222]"}>{formatMoney(realizedPL)}</b></p>
         </div>
         <button disabled={!canContinue} onClick={() => { if (!holding) return; onContinue({ holdingId, quantity: qty, price: unitPrice, fee: feeValue, date, proceeds, capitalSold, realizedPL, note: qty === holding.quantity ? "Bán toàn bộ" : "Bán một phần" }); }} className="w-full rounded-2xl bg-[#B22222] py-3 font-semibold text-white disabled:bg-[#D4D4D4]">Tiếp tục</button>
+      </div>
+    </Modal>
+  );
+}
+
+
+function AdjustInvestmentModal({
+  holdings,
+  current,
+  onClose,
+  onConfirm,
+}: {
+  holdings: InvestmentHolding[];
+  current?: InvestmentHolding;
+  onClose: () => void;
+  onConfirm: (payload: { holdingId: string; quantity: number; remainingCapital: number; realizedPL: number; date: string; note: string }) => void;
+}) {
+  const [holdingId, setHoldingId] = useState(current?.id ?? holdings[0]?.id ?? "");
+  const selected = holdings.find((item) => item.id === holdingId);
+  const [quantity, setQuantity] = useState(String(selected?.quantity ?? 0));
+  const [remainingCapital, setRemainingCapital] = useState(String(Math.round(selected?.remainingCapital ?? 0)));
+  const [realizedPL, setRealizedPL] = useState(String(Math.round(selected?.realizedPL ?? 0)));
+  const [date, setDate] = useState(todayISO());
+  const [note, setNote] = useState("");
+
+  function selectHolding(nextId: string) {
+    const next = holdings.find((item) => item.id === nextId);
+    setHoldingId(nextId);
+    setQuantity(String(next?.quantity ?? 0));
+    setRemainingCapital(String(Math.round(next?.remainingCapital ?? 0)));
+    setRealizedPL(String(Math.round(next?.realizedPL ?? 0)));
+  }
+
+  const qty = Number(quantity) || 0;
+  const capital = parseMoney(remainingCapital);
+  const realized = Number(realizedPL.replace(/[^0-9-]/g, "")) || 0;
+  const avgCost = qty > 0 ? capital / qty : 0;
+  const canSave = Boolean(selected) && qty >= 0 && capital >= 0;
+
+  return (
+    <Modal title="Điều chỉnh khoản đầu tư" sub="Dùng khi nhập sai số lượng, vốn còn lại hoặc lãi/lỗ đã chốt. Không làm thay đổi tiền mặt đầu tư." onClose={onClose}>
+      <div className="space-y-4">
+        <Field label="Khoản đầu tư">
+          <FormSelect
+            title="Chọn khoản đầu tư cần điều chỉnh"
+            value={holdingId}
+            onChange={selectHolding}
+            options={holdings.map((item) => ({
+              value: item.id,
+              label: `${item.code} · ${item.name}`,
+              sub: `${item.status === "holding" ? "Đang nắm giữ" : "Đã bán/đã đóng"} · ${formatMoney(item.remainingCapital)}`,
+            }))}
+          />
+        </Field>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Số lượng thực tế">
+            <input className={inputClass} value={quantity} inputMode="decimal" onChange={(event) => setQuantity(event.target.value)} />
+          </Field>
+          <Field label="Tổng vốn còn lại thực tế">
+            <input className={inputClass} value={remainingCapital} inputMode="numeric" onChange={(event) => setRemainingCapital(event.target.value)} />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Lãi/lỗ đã chốt thực tế">
+            <input className={inputClass} value={realizedPL} inputMode="numeric" onChange={(event) => setRealizedPL(event.target.value)} />
+          </Field>
+          <QuickDateField value={date} onChange={setDate} />
+        </div>
+
+        <div className="rounded-2xl bg-[#F8F6F3] p-4 text-sm text-[#666666]">
+          <div className="flex justify-between gap-3"><span>Giá vốn bình quân sau điều chỉnh</span><b className="text-[#111111]">{formatMoney(avgCost)}</b></div>
+          <p className="mt-2">Điều chỉnh chỉ sửa số liệu khoản đầu tư. Nếu cần sửa tiền mặt đầu tư, hãy dùng luồng chuyển tiền hoặc giao dịch tương ứng.</p>
+        </div>
+
+        <Field label="Ghi chú">
+          <textarea className={cn(inputClass, "min-h-20")} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi chú" />
+        </Field>
+
+        <div className="grid grid-cols-2 gap-3">
+          <button onClick={onClose} className="rounded-2xl border border-black/[0.12] py-3 font-semibold">Hủy</button>
+          <button
+            disabled={!canSave}
+            onClick={() => { onConfirm({ holdingId, quantity: qty, remainingCapital: capital, realizedPL: realized, date, note }); onClose(); }}
+            className="rounded-2xl bg-[#B22222] py-3 font-semibold text-white disabled:bg-[#D4D4D4]"
+          >
+            Lưu điều chỉnh
+          </button>
+        </div>
       </div>
     </Modal>
   );
@@ -278,9 +375,40 @@ function ProceedsModal({ sale, onClose, onConfirm }: { sale: PendingSale; onClos
 }
 
 export function InvestmentPage() {
-  const investmentTransactions = readStoredJson<CashflowTransaction[]>(finhomeStorageKeys.personalTransactions, []).filter((tx) => tx.id.startsWith("invest-") || ["investment_buy", "investment_sell"].includes(tx.kind));
+  const [timeRange, setTimeRange] = useState<WorkspaceTimeRange>(createDefaultWorkspaceTimeRange);
+  const storedInvestmentTransactions = readStoredJson<CashflowTransaction[]>(finhomeStorageKeys.personalTransactions, []).filter((tx) => tx.space === "Đầu tư" || tx.id.startsWith("invest-") || ["investment_buy", "investment_sell"].includes(tx.kind));
   const [cash, setCash] = useState(loadCash);
   const [holdings, setHoldings] = useState(loadHoldings);
+  const holdingTransactions: CashflowTransaction[] = holdings.flatMap((holding) => [
+    ...holding.buyHistory.map((buy, index) => ({
+      id: `holding-${holding.id}-buy-${index}`,
+      date: buy.date,
+      name: `Mua ${holding.code}`,
+      space: "Đầu tư",
+      source: "Tiền mặt đầu tư",
+      amount: buy.quantity * buy.price + buy.fee,
+      kind: "investment_buy" as const,
+      status: "active" as const,
+      note: `${buy.quantity} × ${formatMoney(buy.price)} · phí ${formatMoney(buy.fee)}`,
+      countsAsIncome: false,
+      countsAsExpense: false,
+    })),
+    ...holding.sellHistory.map((sale, index) => ({
+      id: `holding-${holding.id}-sell-${index}`,
+      date: sale.date,
+      name: `Bán ${holding.code}`,
+      space: "Đầu tư",
+      source: holding.name,
+      amount: sale.quantity * sale.price - sale.fee,
+      kind: "investment_sell" as const,
+      status: "active" as const,
+      note: `${sale.note} · lãi/lỗ đã chốt ${formatMoney(sale.realizedPL)}`,
+      countsAsIncome: sale.realizedPL > 0,
+      countsAsExpense: false,
+    })),
+  ]);
+  const investmentTransactions = [...storedInvestmentTransactions, ...holdingTransactions].filter((tx, index, items) => items.findIndex((item) => item.id === tx.id) === index);
+  const periodInvestmentTransactions = investmentTransactions.filter((tx) => isDateInWorkspaceRange(tx.date, timeRange));
   const [modal, setModal] = useState<ModalKind>(null);
   const [pendingSale, setPendingSale] = useState<PendingSale | null>(null);
   const [selectedId, setSelectedId] = useState(() => loadHoldings()[0]?.id ?? "");
@@ -289,8 +417,9 @@ export function InvestmentPage() {
   const sold = holdings.filter((item) => item.status !== "holding" || item.quantity <= 0);
   const current = holdings.find((item) => item.id === selectedId) ?? active[0] ?? holdings[0];
   const investedCapital = active.reduce((sum, item) => sum + item.remainingCapital, 0);
-  const realizedPL = holdings.reduce((sum, item) => sum + item.realizedPL, 0);
-  const financialIncome = holdings.reduce((sum, item) => sum + Math.max(0, item.realizedPL), 0);
+  const periodSales = holdings.flatMap((item) => item.sellHistory).filter((sale) => isDateInWorkspaceRange(sale.date, timeRange));
+  const realizedPL = periodSales.reduce((sum, sale) => sum + sale.realizedPL, 0);
+  const financialIncome = periodSales.reduce((sum, sale) => sum + Math.max(0, sale.realizedPL), 0);
 
   function persist(nextCash: number, nextHoldings = holdings) {
     setCash(nextCash);
@@ -317,10 +446,10 @@ export function InvestmentPage() {
     });
   }
 
-  function buyInvestment(payload: { code: string; name: string; type: string; quantity: number; price: number; fee: number; date: string }) {
+  function buyInvestment(payload: { mode: "new" | "add"; holdingId?: string; code: string; name: string; type: string; quantity: number; price: number; fee: number; date: string }) {
     const total = payload.quantity * payload.price + payload.fee;
     if (total <= 0 || total > cash) return;
-    const existing = holdings.find((item) => item.code === payload.code && item.status === "holding");
+    const existing = payload.mode === "add" ? holdings.find((item) => item.id === payload.holdingId && item.status === "holding") : undefined;
     let nextHoldings: InvestmentHolding[];
     if (existing) {
       nextHoldings = holdings.map((item) => {
@@ -362,7 +491,7 @@ export function InvestmentPage() {
     appendPersonalTransaction({
       id: `invest-buy-${Date.now()}`,
       date: payload.date,
-      name: `Mua ${payload.code}`,
+      name: `${payload.mode === "add" ? "Mua thêm" : "Mua mới"} ${payload.code}`,
       space: "Đầu tư",
       source: "Tiền mặt đầu tư",
       amount: total,
@@ -411,6 +540,37 @@ export function InvestmentPage() {
     setModal(null);
   }
 
+
+  function adjustInvestment(payload: { holdingId: string; quantity: number; remainingCapital: number; realizedPL: number; date: string; note: string }) {
+    const holding = holdings.find((item) => item.id === payload.holdingId);
+    if (!holding) return;
+    const nextQuantity = Math.max(0, payload.quantity);
+    const nextCapital = Math.max(0, payload.remainingCapital);
+    const nextHoldings = holdings.map((item) => item.id === payload.holdingId ? {
+      ...item,
+      quantity: nextQuantity,
+      remainingCapital: nextCapital,
+      avgCost: nextQuantity > 0 ? nextCapital / nextQuantity : 0,
+      realizedPL: payload.realizedPL,
+      status: nextQuantity > 0 ? "holding" : "sold",
+    } : item);
+    persist(cash, nextHoldings);
+    setSelectedId(payload.holdingId);
+    appendPersonalTransaction({
+      id: `invest-adjust-${Date.now()}`,
+      date: payload.date,
+      name: `Điều chỉnh ${holding.code}`,
+      space: "Đầu tư",
+      source: holding.name,
+      amount: 0,
+      kind: "adjustment",
+      status: "active",
+      note: payload.note.trim() || "Điều chỉnh số liệu khoản đầu tư, không làm thay đổi tiền mặt",
+      countsAsIncome: false,
+      countsAsExpense: false,
+    });
+  }
+
   const kpis = [
     { label: "Tiền mặt đầu tư", value: formatMoney(cash), sub: "Tiền riêng của không gian Đầu tư", icon: DollarSign, color: "text-[#111111]" },
     { label: "Tổng vốn đang đầu tư", value: formatMoney(investedCapital), sub: "Chỉ vốn còn nắm giữ", icon: BarChart2, color: "text-[#111111]" },
@@ -428,10 +588,11 @@ export function InvestmentPage() {
             <h1 className="text-[1.9rem] font-semibold text-[#111111]">Đầu tư</h1>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-            <WorkspaceTimeFilter />
+            <WorkspaceTimeFilter onChange={setTimeRange} />
             <button onClick={() => setModal("transfer")} className="rounded-xl border border-black/[0.12] bg-white px-3.5 py-2 text-xs font-semibold text-[#111111]"><ArrowRightLeft className="mr-1 inline size-3.5" /> Chuyển tiền</button>
             <button onClick={() => setModal("buy")} className="rounded-xl bg-[#111111] px-3.5 py-2 text-xs font-semibold text-white"><Plus className="mr-1 inline size-3.5" /> Mua</button>
             <button onClick={() => setModal("sell")} className="rounded-xl bg-[#B22222] px-3.5 py-2 text-xs font-semibold text-white">Bán</button>
+            <button onClick={() => setModal("adjust")} disabled={!holdings.length} className="rounded-xl border border-black/[0.12] bg-white px-3.5 py-2 text-xs font-semibold text-[#111111] disabled:opacity-50"><SlidersHorizontal className="mr-1 inline size-3.5" /> Điều chỉnh</button>
           </div>
         </div>
 
@@ -502,24 +663,15 @@ export function InvestmentPage() {
           )}
         </div>
 
-        <div className="rounded-2xl border border-black/[0.07] bg-white p-5">
-          <p className="text-xs font-semibold uppercase text-[#A3A3A3]">Đã bán</p>
-          <p className="mb-3 font-semibold text-[#111111]">Lịch sử khoản đầu tư đã bán</p>
-          {sold.length ? sold.map((holding) => (
-            <div key={holding.id} className="mb-2 rounded-xl bg-[#F5F5F5] p-3 opacity-70">
-              <div className="flex justify-between gap-3"><p className="font-semibold">{holding.code} · {holding.name}</p><p className={cn("font-semibold", holding.realizedPL >= 0 ? "text-[#166534]" : "text-[#B22222]")}>{formatMoney(holding.realizedPL)}</p></div>
-              <p className="mt-1 text-xs text-[#666666]">{holding.sellHistory.map((sale) => sale.note).join(", ") || "Đã bán"}</p>
-            </div>
-          )) : <p className="text-xs text-[#A3A3A3]">Chưa có khoản đã bán.</p>}
-        </div>
       </div>
 
-      <WorkspaceTransactionHistory title="Lịch sử giao dịch Đầu tư" subtitle="Chuyển tiền, mua và bán tài sản đầu tư." transactions={investmentTransactions} />
+      <WorkspaceTransactionHistory title="Lịch sử giao dịch Đầu tư" subtitle="Chuyển tiền, mua và bán tài sản đầu tư." transactions={periodInvestmentTransactions} />
 
       <AnimatePresence>
         {modal === "transfer" && <TransferModal cash={cash} onClose={() => setModal(null)} onConfirm={transferOut} />}
-        {modal === "buy" && <BuyModal cash={cash} onClose={() => setModal(null)} onConfirm={buyInvestment} />}
+        {modal === "buy" && <BuyModal cash={cash} holdings={active} onClose={() => setModal(null)} onConfirm={buyInvestment} />}
         {modal === "sell" && <SellModal holdings={active} onClose={() => setModal(null)} onContinue={(sale) => { setPendingSale(sale); setModal("proceeds"); }} />}
+        {modal === "adjust" && <AdjustInvestmentModal holdings={holdings} current={current} onClose={() => setModal(null)} onConfirm={adjustInvestment} />}
         {modal === "proceeds" && pendingSale && <ProceedsModal sale={pendingSale} onClose={() => { setPendingSale(null); setModal(null); }} onConfirm={confirmSale} />}
       </AnimatePresence>
     </div>

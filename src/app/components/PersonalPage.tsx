@@ -2,7 +2,7 @@
 import { motion, AnimatePresence } from "motion/react";
 import { Plus, ArrowRightLeft, Eye, EyeOff, Edit3, MoreHorizontal, Wallet, Building, Smartphone, CreditCard, ArrowUpRight, ArrowDownRight, X, SlidersHorizontal, FileText, Archive, Search, ChevronRight, ChevronDown, Check, Trash2, AlertTriangle } from "lucide-react";
 import { cn } from "./ui/utils";
-import { WorkspaceTimeFilter } from "./WorkspaceTimeFilter";
+import { WorkspaceTimeFilter, createDefaultWorkspaceTimeRange, isDateInWorkspaceRange, type WorkspaceTimeRange } from "./WorkspaceTimeFilter";
 import { QuickDateField, todayISO } from "./QuickDateField";
 import { businessSpaces, creditCards, formatMoney, investmentCash, metrics, personalAccounts, personalTransactions, savingGoals, transactionCategories, loans, type CashflowTransaction, type TransactionCategory, type TransactionType, type Loan } from "../finhomeData";
 import { finhomeStorageKeys, readStoredJson, writeStoredJson } from "../finhomeStorage";
@@ -512,6 +512,14 @@ function CategorySelectButton({ parent, child, onClick }: { parent?: Transaction
 }
 const LOANS_STORAGE_KEY = finhomeStorageKeys.loans;
 
+type EditableTransactionPatch = {
+  name: string;
+  date: string;
+  source: string;
+  amount: number;
+  note: string;
+};
+
 function AddTransactionModal({ onClose, onAdd, accounts, cards }: { onClose: () => void; onAdd: (transaction: CashflowTransaction) => void; accounts: Account[]; cards: typeof creditCards }) {
   const activeAccounts = accounts.filter((account) => account.status !== "hidden");
   const loanItems = readStoredJson<Loan[]>(LOANS_STORAGE_KEY, loans).filter((loan) => loan.status !== "settled" && loan.status !== "closed" && loan.outstanding > 0);
@@ -718,13 +726,16 @@ function TransferSelectBox({ label, value, onClick }: { label: string; value?: T
 
 function TransferModal({ onClose, accounts, onConfirm }: { onClose: () => void; accounts: Account[]; onConfirm: (transaction: CashflowTransaction) => void }) {
   const activeAccounts = accounts.filter((account) => account.status !== "hidden" && account.status !== "closed");
+  const latestBusinessSpaces = readStoredJson<typeof businessSpaces>(finhomeStorageKeys.businessSpaces, businessSpaces);
+  const latestSavingGoals = readStoredJson<typeof savingGoals>(finhomeStorageKeys.savingsGoals, savingGoals);
+  const latestInvestmentCash = readStoredNumber(finhomeStorageKeys.investmentCash, investmentCash);
   const targets: TransferTarget[] = [
     ...activeAccounts.map((account) => ({ id: `personal-${account.id}`, name: account.name, group: "Cá nhân" as const, balance: account.balance, icon: iconMap[account.type], color: account.color })),
-    ...businessSpaces.filter((space) => space.status === "active").map((space) => ({ id: `business-${space.id}`, name: space.name, group: "Kinh doanh" as const, balance: space.cash, icon: Building, color: "#8B2F13" })),
-    { id: "investment-cash", name: "Tiền mặt đầu tư", group: "Đầu tư", balance: investmentCash, icon: ArrowUpRight, color: "#166534" },
-    { id: "investment-tcbs", name: "TCBS", group: "Đầu tư", balance: investmentCash, icon: Building, color: "#B22222" },
+    ...latestBusinessSpaces.filter((space) => space.status === "active").map((space) => ({ id: `business-${space.id}`, name: space.name, group: "Kinh doanh" as const, balance: space.cash, icon: Building, color: "#8B2F13" })),
+    { id: "investment-cash", name: "Tiền mặt đầu tư", group: "Đầu tư", balance: latestInvestmentCash, icon: ArrowUpRight, color: "#166534" },
+    { id: "investment-tcbs", name: "TCBS", group: "Đầu tư", balance: latestInvestmentCash, icon: Building, color: "#B22222" },
     { id: "investment-crypto", name: "Crypto", group: "Đầu tư", icon: ArrowUpRight, color: "#111111" },
-    ...savingGoals.filter((goal) => !["hidden", "closed", "paused"].includes(goal.status)).map((goal) => ({ id: `saving-${goal.id}`, name: goal.name, group: "Tiết kiệm" as const, balance: goal.current, icon: Wallet, color: "#0F766E" })),
+    ...latestSavingGoals.filter((goal) => !["hidden", "closed", "paused"].includes(goal.status)).map((goal) => ({ id: `saving-${goal.id}`, name: goal.name, group: "Tiết kiệm" as const, balance: goal.current, icon: Wallet, color: "#0F766E" })),
   ];
   const [from, setFrom] = useState<TransferTarget | undefined>(targets.find((target) => target.group === "Cá nhân"));
   const [to, setTo] = useState<TransferTarget | undefined>(targets.find((target) => target.group === "Tiết kiệm"));
@@ -835,6 +846,7 @@ const PERSONAL_STORAGE_KEYS = {
   cancelled: finhomeStorageKeys.personalCancelledTransactions,
 } as const;
 export function PersonalPage() {
+  const [timeRange, setTimeRange] = useState<WorkspaceTimeRange>(createDefaultWorkspaceTimeRange);
   const [tab, setTab] = useState<Tab>("accounts");
   const [showHidden, setShowHidden] = useState(false);
   const [hidden, setHidden] = useState<Set<string>>(new Set(personalAccounts.filter(a => a.status === "hidden").map(a => a.id)));
@@ -848,6 +860,8 @@ export function PersonalPage() {
   const [accountSort, setAccountSort] = useState<"balance" | "name" | "type" | "newest">("balance");
   const [extraTransactions, setExtraTransactions] = useState<CashflowTransaction[]>(() => readStoredJson(PERSONAL_STORAGE_KEYS.transactions, []));
   const [cancelledTxIds, setCancelledTxIds] = useState<Set<string>>(() => new Set(readStoredJson<string[]>(PERSONAL_STORAGE_KEYS.cancelled, [])));
+  const [actionTarget, setActionTarget] = useState<CashflowTransaction | null>(null);
+  const [editTarget, setEditTarget] = useState<CashflowTransaction | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CashflowTransaction | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [accountModal, setAccountModal] = useState<AccountModal>(null);
@@ -881,15 +895,16 @@ export function PersonalPage() {
       return accounts.indexOf(b) - accounts.indexOf(a);
     });
   const allTransactions = [...extraTransactions, ...personalTransactions].map((tx) => cancelledTxIds.has(tx.id) ? { ...tx, status: "cancelled" as const } : tx);
+  const periodTransactions = allTransactions.filter((tx) => isDateInWorkspaceRange(tx.date, timeRange));
   const currentPersonalBalance = accounts.filter(a => a.status !== "hidden").reduce((s, a) => s + a.balance, 0);
   const isReportExpense = (transaction: CashflowTransaction) => transaction.status !== "cancelled" && Boolean(transaction.countsAsExpense) && !["credit_card_payment", "loan_principal"].includes(transaction.kind);
   const isReportIncome = (transaction: CashflowTransaction) => transaction.status !== "cancelled" && Boolean(transaction.countsAsIncome) && transaction.kind !== "loan_disbursement";
-  const incomeItems = allTransactions.filter(isReportIncome);
-  const expenseItems = allTransactions.filter(isReportExpense);
-  const transferItems = allTransactions.filter(t => t.status !== "cancelled" && ["transfer", "loan_disbursement", "loan_principal", "credit_card_payment"].includes(t.kind));
+  const incomeItems = periodTransactions.filter(isReportIncome);
+  const expenseItems = periodTransactions.filter(isReportExpense);
+  const transferItems = periodTransactions.filter(t => t.status !== "cancelled" && ["transfer", "loan_disbursement", "loan_principal", "credit_card_payment"].includes(t.kind));
   const currentIncome = incomeItems.reduce((sum, tx) => sum + tx.amount, 0);
   const currentExpenses = expenseItems.reduce((sum, tx) => sum + tx.amount, 0);
-  const currentFinancialCosts = allTransactions.filter(t => t.status !== "cancelled" && t.kind === "loan_interest" && t.countsAsExpense).reduce((sum, tx) => sum + tx.amount, 0);
+  const currentFinancialCosts = periodTransactions.filter(t => t.status !== "cancelled" && t.kind === "loan_interest" && t.countsAsExpense).reduce((sum, tx) => sum + tx.amount, 0);
   const displayedTabs = [
     { id: "accounts" as const, label: "Tài khoản", count: accounts.filter(a => a.status !== "hidden").length },
     { id: "income" as const, label: "Thu nhập", count: incomeItems.length },
@@ -977,20 +992,38 @@ export function PersonalPage() {
     }
     setTab("cards");
   };
+  const isEditableTransaction = (transaction: CashflowTransaction) => extraTransactions.some((item) => item.id === transaction.id);
+  const updateTransaction = (transaction: CashflowTransaction, patch: EditableTransactionPatch) => {
+    if (!isEditableTransaction(transaction)) return;
+    const updated: CashflowTransaction = {
+      ...transaction,
+      name: patch.name.trim() || transaction.name,
+      date: patch.date,
+      source: patch.source,
+      amount: Math.max(0, patch.amount),
+      note: patch.note.trim(),
+    };
+    applyTransactionToAccounts(transaction, -1);
+    setExtraTransactions((items) => items.map((item) => item.id === transaction.id ? updated : item));
+    applyTransactionToAccounts(updated, 1);
+    setEditTarget(null);
+    setActionTarget(null);
+  };
   const cancelTransaction = (transaction: CashflowTransaction) => {
     setCancelledTxIds((ids) => new Set(ids).add(transaction.id));
     setExtraTransactions((items) => items.map((item) => item.id === transaction.id ? { ...item, status: "cancelled" } : item));
     if (extraTransactions.some((item) => item.id === transaction.id)) applyTransactionToAccounts(transaction, -1);
     setDeleteTarget(null);
+    setActionTarget(null);
   };
 
   return (
     <div className="min-h-full bg-[#F9F9F9]"><div className="px-6 lg:px-8 py-8 max-w-[1200px] mx-auto space-y-6">
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}><div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold text-[#A3A3A3] uppercase tracking-[0.1em] mb-1">Ví trung tâm</p><h1 className="text-[1.75rem] font-semibold text-[#111111] tracking-tight leading-none">Cá nhân</h1></div><div className="flex flex-wrap items-center justify-end gap-2"><WorkspaceTimeFilter /><button onClick={() => setShowTransfer(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-black/[0.12] bg-white text-xs font-semibold text-[#111111] shadow-sm hover:bg-[#F9F6F1]"><ArrowRightLeft className="size-3.5 text-[#111111]" /> Chuyển tiền</button><button className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#B22222] text-xs font-semibold text-white" onClick={() => setShowTransaction(true)}><Plus className="size-3.5" /> Giao dịch</button></div></div></motion.div>
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}><div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold text-[#A3A3A3] uppercase tracking-[0.1em] mb-1">Ví trung tâm</p><h1 className="text-[1.75rem] font-semibold text-[#111111] tracking-tight leading-none">Cá nhân</h1></div><div className="flex flex-wrap items-center justify-end gap-2"><WorkspaceTimeFilter onChange={setTimeRange} /><button onClick={() => setShowTransfer(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-black/[0.12] bg-white text-xs font-semibold text-[#111111] shadow-sm hover:bg-[#F9F6F1]"><ArrowRightLeft className="size-3.5 text-[#111111]" /> Chuyển tiền</button><button className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#B22222] text-xs font-semibold text-white" onClick={() => setShowTransaction(true)}><Plus className="size-3.5" /> Giao dịch</button></div></div></motion.div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[
         ["Tổng số dư cá nhân", formatMoney(currentPersonalBalance), "Tổng ví đang sử dụng", "text-[#111111]"],
-        ["Thu nhập tháng này", `+${formatMoney(currentIncome)}`, "Chỉ thu nhập thực tế", "text-[#166534]"],
-        ["Chi tiêu tháng này", `-${formatMoney(currentExpenses)}`, "Gồm chi tiêu tiền mặt và bằng thẻ", "text-[#B22222]"],
+        ["Thu nhập trong kỳ", `+${formatMoney(currentIncome)}`, "Chỉ thu nhập thực tế", "text-[#166534]"],
+        ["Chi tiêu trong kỳ", `-${formatMoney(currentExpenses)}`, "Gồm chi tiêu tiền mặt và bằng thẻ", "text-[#B22222]"],
         ["Chi phí tài chính", `-${formatMoney(currentFinancialCosts)}`, "Lãi vay, phí vay, phí thẻ", "text-[#B45309]"],
       ].map(([label, value, sub, color]) => <div key={label} className="rounded-2xl bg-white border border-black/[0.07] p-4 shadow-[0_2px_8px_rgba(0,0,0,0.05)]"><p className="text-[10px] font-semibold text-[#A3A3A3] uppercase tracking-[0.1em] mb-2">{label}</p><p className={cn("text-xl font-semibold tabular-nums", color)}>{value}</p><p className="text-xs text-[#666666] mt-2">{sub}</p></div>)}</div>
       <div className="flex gap-1 bg-black/[0.04] p-1 rounded-xl w-fit flex-wrap">{displayedTabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} className={cn("relative px-4 py-2 rounded-lg text-xs font-semibold", tab === t.id ? "bg-white text-[#111111] shadow-sm" : "text-[#A3A3A3]")}>{t.label}<span className="ml-1.5 text-[9px]">{t.count}</span></button>)}</div>
@@ -1012,15 +1045,65 @@ export function PersonalPage() {
           </div>
           {!visibleAccounts.length && <div className="rounded-2xl border border-dashed border-black/[0.12] bg-white px-4 py-8 text-center text-sm text-[#666666]">Không tìm thấy ví phù hợp.</div>}
         </motion.div>}
-        {tab === "income" && <List title="Thu nhập thực tế" total={`+${formatMoney(currentIncome)}`} items={incomeItems} mode="income" onDelete={setDeleteTarget} />}
-        {tab === "expenses" && <List title="Chi tiêu cá nhân" total={`-${formatMoney(currentExpenses)}`} items={expenseItems} mode="expense" onDelete={setDeleteTarget} />}
-        {tab === "transfers" && <List title="Luồng tiền không tính thu/chi" total="Không đổi tài sản ròng" items={transferItems} mode="neutral" onDelete={setDeleteTarget} />}
+        {tab === "income" && <List title="Thu nhập thực tế" total={`+${formatMoney(currentIncome)}`} items={incomeItems} mode="income" onAction={setActionTarget} />}
+        {tab === "expenses" && <List title="Chi tiêu cá nhân" total={`-${formatMoney(currentExpenses)}`} items={expenseItems} mode="expense" onAction={setActionTarget} />}
+        {tab === "transfers" && <List title="Luồng tiền không tính thu/chi" total="Không đổi tài sản ròng" items={transferItems} mode="neutral" onAction={setActionTarget} />}
         {tab === "cards" && <motion.div key="cards" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="grid grid-cols-1 md:grid-cols-2 gap-4">{cards.map(card => { const available = Math.max(0, card.limit - card.used); const usagePct = card.limit ? Math.min(100, Math.round(card.used / card.limit * 100)) : 0; return <div key={card.id} className="rounded-2xl bg-white border border-black/[0.07] p-5"><div className="rounded-2xl p-5 text-white mb-4" style={{ background: card.color }}><div className="flex items-start justify-between gap-3"><div><p className="text-white/60 text-xs">{card.bank}</p><p className="font-semibold">{card.name}</p></div><div className="text-right"><p className="text-white/60 text-[10px] uppercase font-semibold tracking-[0.1em]">Hạn mức</p><p className="text-sm font-semibold">{formatMoney(card.limit)}</p></div></div><p className="text-2xl font-semibold mt-6">{formatMoney(card.used)}</p><p className="text-white/50 text-xs">Dư nợ thẻ · •••• {card.last4}</p><div className="mt-4 h-2 rounded-full bg-white/20"><div className="h-full rounded-full bg-white" style={{ width: `${usagePct}%` }} /></div><div className="mt-2 flex items-center justify-between text-[11px] text-white/70"><span>Đã dùng {usagePct}%</span><span>Còn {formatMoney(available)}</span></div></div><p className="text-xs text-[#666666]">Chi tiêu bằng thẻ tạo chi tiêu và tăng nợ thẻ. Thanh toán thẻ không tính chi tiêu lần hai.</p></div>; })}</motion.div>}
-        {tab === "history" && <PersonalTransactionHistory items={allTransactions} onDelete={setDeleteTarget} />}
+        {tab === "history" && <PersonalTransactionHistory items={periodTransactions} onAction={setActionTarget} />}
       </AnimatePresence>
     </div><AnimatePresence>{showTransfer && <TransferModal onClose={() => setShowTransfer(false)} accounts={accounts} onConfirm={addTransaction} />}
-      {showCardPayment && <CreditCardPaymentModal onClose={() => setShowCardPayment(false)} accounts={accounts} cards={cards} onPay={payCreditCard} />}{showTransaction && <AddTransactionModal onClose={() => setShowTransaction(false)} onAdd={addTransaction} accounts={accounts} cards={cards} />}{deleteTarget && <DeleteTransactionModal transaction={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => cancelTransaction(deleteTarget)} />}{showAddAccount && <AddAccountModal onClose={() => setShowAddAccount(false)} onAdd={(account) => setAccounts((items) => [...items, account])} />}{selectedAccount && accountModal && <AccountModalView modal={accountModal} acc={selectedAccount} transactions={allTransactions} onClose={() => setAccountModal(null)} onSwitch={setAccountModal} onAddTransaction={() => { setAccountModal(null); setShowTransaction(true); }} onTransfer={() => { setAccountModal(null); setShowTransfer(true); }} onToggleHidden={() => { toggle(selectedAccount.id); setAccountModal(null); }} onUpdateAccount={updateAccount} onAdjustBalance={adjustAccountBalance} />}</AnimatePresence></div>
+      {showCardPayment && <CreditCardPaymentModal onClose={() => setShowCardPayment(false)} accounts={accounts} cards={cards} onPay={payCreditCard} />}{showTransaction && <AddTransactionModal onClose={() => setShowTransaction(false)} onAdd={addTransaction} accounts={accounts} cards={cards} />}{actionTarget && <TransactionActionModal transaction={actionTarget} canEdit={isEditableTransaction(actionTarget)} onClose={() => setActionTarget(null)} onEdit={() => { setEditTarget(actionTarget); setActionTarget(null); }} onCancel={() => { setDeleteTarget(actionTarget); setActionTarget(null); }} />}{editTarget && <EditTransactionModal transaction={editTarget} accounts={accounts} cards={cards} onClose={() => setEditTarget(null)} onSave={(patch) => updateTransaction(editTarget, patch)} />}{deleteTarget && <DeleteTransactionModal transaction={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => cancelTransaction(deleteTarget)} />}{showAddAccount && <AddAccountModal onClose={() => setShowAddAccount(false)} onAdd={(account) => setAccounts((items) => [...items, account])} />}{selectedAccount && accountModal && <AccountModalView modal={accountModal} acc={selectedAccount} transactions={periodTransactions} onClose={() => setAccountModal(null)} onSwitch={setAccountModal} onAddTransaction={() => { setAccountModal(null); setShowTransaction(true); }} onTransfer={() => { setAccountModal(null); setShowTransfer(true); }} onToggleHidden={() => { toggle(selectedAccount.id); setAccountModal(null); }} onUpdateAccount={updateAccount} onAdjustBalance={adjustAccountBalance} />}</AnimatePresence></div>
   );
+}
+
+function TransactionActionModal({ transaction, canEdit, onClose, onEdit, onCancel }: { transaction: CashflowTransaction; canEdit: boolean; onClose: () => void; onEdit: () => void; onCancel: () => void }) {
+  return <BaseModal title="Thao tác giao dịch" sub="Chọn chức năng cho giao dịch này" onClose={onClose}>
+    <div className="space-y-3">
+      <div className="rounded-2xl bg-[#F9F6F1] p-4">
+        <p className="text-sm font-semibold text-[#111111]">{transaction.name}</p>
+        <p className="mt-1 text-xs text-[#666666]">{transaction.source} · {formatMoney(transaction.amount)}</p>
+      </div>
+      <button onClick={onEdit} disabled={!canEdit} className={cn("flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition-colors", canEdit ? "border-black/[0.08] bg-white text-[#111111] hover:bg-[#F9F6F1]" : "border-black/[0.05] bg-[#FAFAFA] text-[#A3A3A3]")}>
+        <span>Sửa giao dịch</span><Edit3 className="size-4" />
+      </button>
+      {!canEdit && <p className="rounded-xl bg-[#F9F6F1] px-3 py-2 text-xs leading-relaxed text-[#666666]">Giao dịch mẫu/hệ thống hiện chỉ cho hủy mềm. Giao dịch bạn tạo mới sẽ sửa được đầy đủ.</p>}
+      <button onClick={onCancel} className="flex w-full items-center justify-between rounded-2xl border border-[#FEE2E2] bg-[#FEF2F2] px-4 py-3 text-left text-sm font-semibold text-[#B22222] transition-colors hover:bg-[#FDECEC]">
+        <span>Hủy giao dịch</span><Trash2 className="size-4" />
+      </button>
+    </div>
+  </BaseModal>;
+}
+
+function EditTransactionModal({ transaction, accounts, cards, onClose, onSave }: { transaction: CashflowTransaction; accounts: Account[]; cards: typeof creditCards; onClose: () => void; onSave: (patch: EditableTransactionPatch) => void }) {
+  const activeAccounts = accounts.filter((account) => account.status !== "hidden");
+  const isExpense = transaction.countsAsExpense || transaction.kind === "credit_card_spend";
+  const walletOptions: SelectOption[] = activeAccounts.map((account) => {
+    const Icon = iconMap[account.type];
+    return { value: account.name, label: account.name, sub: "Cá nhân · " + formatMoney(account.balance), icon: <Icon className="size-4" style={{ color: account.color }} /> };
+  });
+  const creditCardOptions: SelectOption[] = cards.filter((card) => card.status === "active").map((card) => ({ value: card.name, label: card.name, sub: "Thẻ tín dụng · dư nợ " + formatMoney(card.used), icon: <CreditCard className="size-4" style={{ color: card.color }} /> }));
+  const accountOptions = isExpense ? [...walletOptions, ...creditCardOptions] : walletOptions;
+  const [name, setName] = useState(transaction.name);
+  const [date, setDate] = useState(transaction.date);
+  const [source, setSource] = useState(transaction.source);
+  const [amount, setAmount] = useState(String(Math.abs(transaction.amount)));
+  const [note, setNote] = useState(transaction.note || "");
+  const amountValue = Math.max(0, Number(amount) || 0);
+
+  return <BaseModal title="Sửa giao dịch" sub="Cập nhật lại giao dịch đã nhập sai" onClose={onClose}>
+    <div className="space-y-3.5">
+      <QuickDateField label="Ngày giao dịch" value={date} onChange={setDate} variant="chip" />
+      <Field label="Tên giao dịch"><input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} placeholder="Tên giao dịch" /></Field>
+      <Field label="Tài khoản / Nguồn tiền"><CustomSelect title="Chọn tài khoản" value={source} options={accountOptions} onChange={setSource} /></Field>
+      <Field label="Số tiền"><input className={inputClass} type="number" min="0" value={amount} onChange={(event) => setAmount(event.target.value)} /></Field>
+      <Field label="Ghi chú"><textarea className={cn(inputClass, "min-h-[72px] resize-none")} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi chú" /></Field>
+      <div className="rounded-2xl bg-[#F9F6F1] px-4 py-3 text-xs leading-relaxed text-[#666666]">Khi lưu, FinHome sẽ đảo số dư theo giao dịch cũ rồi áp dụng lại giao dịch mới để tránh lệch ví/thẻ.</div>
+      <div className="flex gap-2.5 pt-1">
+        <button onClick={onClose} className="flex-1 rounded-xl border border-black/[0.12] bg-white py-3 text-sm font-semibold text-[#111111]">Hủy</button>
+        <button onClick={() => onSave({ name, date, source, amount: amountValue, note })} disabled={amountValue <= 0} className={cn("flex-1 rounded-xl py-3 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(178,34,34,0.22)]", amountValue <= 0 ? "bg-[#D4D4D4]" : "bg-[#B22222]")}>Lưu thay đổi</button>
+      </div>
+    </div>
+  </BaseModal>;
 }
 
 function DeleteTransactionModal({ transaction, onClose, onConfirm }: { transaction: CashflowTransaction; onClose: () => void; onConfirm: () => void }) {
@@ -1033,11 +1116,11 @@ function DeleteTransactionModal({ transaction, onClose, onConfirm }: { transacti
   </BaseModal>;
 }
 
-function List({ title, total, items, mode, onDelete }: { title: string; total: string; items: typeof personalTransactions; mode: "income" | "expense" | "neutral"; onDelete: (transaction: CashflowTransaction) => void }) {
-  return <motion.div key={title} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="bg-white rounded-2xl border border-black/[0.07] shadow-[0_2px_8px_rgba(0,0,0,0.05)] overflow-hidden"><div className="flex items-center justify-between px-6 py-4 border-b border-black/[0.05]"><p className="text-base font-semibold text-[#111111]">{title}</p><span className="text-sm font-semibold text-[#111111]">{total}</span></div><div className="divide-y divide-black/[0.04]">{items.map(item => <div key={item.id} className="flex items-center gap-4 px-6 py-4"><div className={cn("size-9 rounded-xl flex items-center justify-center", mode === "income" ? "bg-[#DCFCE7]" : mode === "expense" ? "bg-[#FEF2F2]" : "bg-[#F5F5F5]")}>{mode === "income" ? <ArrowUpRight className="size-4 text-[#166534]" /> : mode === "expense" ? <ArrowDownRight className="size-4 text-[#B22222]" /> : <ArrowRightLeft className="size-4 text-[#666666]" />}</div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-[#111111]">{item.name}</p><p className="mt-0.5 truncate text-xs text-[#A3A3A3]">{item.source} · {item.note}</p></div><p className={cn("text-sm font-semibold tabular-nums", mode === "income" ? "text-[#166534]" : mode === "expense" ? "text-[#B22222]" : "text-[#111111]")}>{mode === "income" ? "+" : mode === "expense" ? "-" : ""}{formatMoney(item.amount)}</p><button title="Xóa giao dịch" aria-label="Xóa giao dịch" onClick={() => onDelete(item)} className="flex size-9 shrink-0 items-center justify-center rounded-xl text-[#A3A3A3] transition-colors hover:bg-[#FEF2F2] hover:text-[#B22222]"><Trash2 className="size-4" /></button></div>)}</div></motion.div>;
+function List({ title, total, items, mode, onAction }: { title: string; total: string; items: typeof personalTransactions; mode: "income" | "expense" | "neutral"; onAction: (transaction: CashflowTransaction) => void }) {
+  return <motion.div key={title} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="bg-white rounded-2xl border border-black/[0.07] shadow-[0_2px_8px_rgba(0,0,0,0.05)] overflow-hidden"><div className="flex items-center justify-between px-6 py-4 border-b border-black/[0.05]"><p className="text-base font-semibold text-[#111111]">{title}</p><span className="text-sm font-semibold text-[#111111]">{total}</span></div><div className="divide-y divide-black/[0.04]">{items.map(item => <div key={item.id} className="flex items-center gap-4 px-6 py-4"><div className={cn("size-9 rounded-xl flex items-center justify-center", mode === "income" ? "bg-[#DCFCE7]" : mode === "expense" ? "bg-[#FEF2F2]" : "bg-[#F5F5F5]")}>{mode === "income" ? <ArrowUpRight className="size-4 text-[#166534]" /> : mode === "expense" ? <ArrowDownRight className="size-4 text-[#B22222]" /> : <ArrowRightLeft className="size-4 text-[#666666]" />}</div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-[#111111]">{item.name}</p><p className="mt-0.5 truncate text-xs text-[#A3A3A3]">{item.source} · {item.note}</p></div><p className={cn("text-sm font-semibold tabular-nums", mode === "income" ? "text-[#166534]" : mode === "expense" ? "text-[#B22222]" : "text-[#111111]")}>{mode === "income" ? "+" : mode === "expense" ? "-" : ""}{formatMoney(item.amount)}</p><button title="Thao tác giao dịch" aria-label="Thao tác giao dịch" onClick={() => onAction(item)} className="flex size-9 shrink-0 items-center justify-center rounded-xl text-[#A3A3A3] transition-colors hover:bg-[#F5F5F5] hover:text-[#111111]"><MoreHorizontal className="size-4" /></button></div>)}</div></motion.div>;
 }
 
-function PersonalTransactionHistory({ items, onDelete }: { items: CashflowTransaction[]; onDelete: (transaction: CashflowTransaction) => void }) {
+function PersonalTransactionHistory({ items, onAction }: { items: CashflowTransaction[]; onAction: (transaction: CashflowTransaction) => void }) {
   const sortedItems = [...items].sort((a, b) => b.date.localeCompare(a.date));
   const formatDate = (value: string) => {
     const [year, month, day] = value.split("-");
@@ -1076,7 +1159,7 @@ function PersonalTransactionHistory({ items, onDelete }: { items: CashflowTransa
           {item.note && <p className="mt-1 truncate text-xs text-[#666666]">{item.note}</p>}
         </div>
         <p className={cn("shrink-0 text-sm font-semibold tabular-nums", isIncome ? "text-[#166534]" : isExpense ? "text-[#B22222]" : "text-[#111111]", tone === "cancelled" && "line-through text-[#737373]")}>{isIncome ? "+" : isExpense && item.amount >= 0 ? "-" : ""}{formatMoney(Math.abs(item.amount))}</p>
-        {tone !== "cancelled" && <button title="Xóa giao dịch" aria-label="Xóa giao dịch" onClick={() => onDelete(item)} className="flex size-9 shrink-0 items-center justify-center rounded-xl text-[#A3A3A3] transition-colors hover:bg-[#FEF2F2] hover:text-[#B22222]"><Trash2 className="size-4" /></button>}
+        {tone !== "cancelled" && <button title="Thao tác giao dịch" aria-label="Thao tác giao dịch" onClick={() => onAction(item)} className="flex size-9 shrink-0 items-center justify-center rounded-xl text-[#A3A3A3] transition-colors hover:bg-[#F5F5F5] hover:text-[#111111]"><MoreHorizontal className="size-4" /></button>}
       </div>;
     })}</div> : <div className="px-6 py-12 text-center"><FileText className="mx-auto size-8 text-[#D4D4D4]" /><p className="mt-3 text-sm font-semibold text-[#111111]">Chưa có giao dịch Cá nhân</p><p className="mt-1 text-xs text-[#A3A3A3]">Các giao dịch thu, chi và chuyển tiền sẽ xuất hiện tại đây.</p></div>}
   </motion.div>;
