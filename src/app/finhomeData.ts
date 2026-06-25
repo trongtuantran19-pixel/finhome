@@ -37,6 +37,7 @@ export type CashflowTransaction = {
   note: string;
   countsAsIncome?: boolean;
   countsAsExpense?: boolean;
+  details?: Record<string, string | number | boolean | null | undefined>;
 };
 
 export type BusinessSpace = {

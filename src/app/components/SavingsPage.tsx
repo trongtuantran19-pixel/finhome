@@ -399,6 +399,15 @@ export function SavingsPage() {
       kind: "transfer",
       status: "active",
       note: note.trim() || (modal.type === "deposit" ? "Chuyển tiền nội bộ vào tiết kiệm, không tính chi tiêu" : "Chuyển tiền nội bộ từ tiết kiệm về Cá nhân, không tính thu nhập"),
+      details: {
+        savingsAction: modal.type === "deposit" ? "Nạp mục tiêu" : "Rút về cá nhân",
+        goalName: goal.name,
+        fromAccount: modal.type === "deposit" ? account.name : undefined,
+        toAccount: modal.type === "withdraw" ? account.name : undefined,
+        amount,
+        before: goal.current,
+        after: modal.type === "deposit" ? goal.current + amount : Math.max(0, goal.current - amount),
+      },
       countsAsIncome: false,
       countsAsExpense: false,
     });
@@ -430,6 +439,15 @@ export function SavingsPage() {
       kind: "transfer",
       status: "active",
       note: note.trim() || "Chuyển tiền nội bộ vào tiết kiệm sinh lãi, không tính chi tiêu",
+      details: {
+        savingsAction: "Gửi thêm sinh lãi",
+        savingName: saving?.name ?? "Tiết kiệm sinh lãi",
+        fromAccount: source.name,
+        amount,
+        principal: amount,
+        before: saving?.principal ?? 0,
+        after: (saving?.principal ?? 0) + amount,
+      },
       countsAsIncome: false,
       countsAsExpense: false,
     });
@@ -467,6 +485,13 @@ export function SavingsPage() {
         kind: "adjustment",
         status: "active",
         note: payload.note.trim() || "Điều chỉnh số liệu tiết kiệm mục tiêu, không tính thu nhập/chi tiêu",
+        details: {
+          savingsAction: "Điều chỉnh mục tiêu",
+          goalName: goal?.name ?? "Tiết kiệm mục tiêu",
+          after: Math.max(0, payload.current),
+          target: Math.max(0, payload.target),
+          monthly: Math.max(0, payload.monthly),
+        },
         countsAsIncome: false,
         countsAsExpense: false,
       });
@@ -492,6 +517,15 @@ export function SavingsPage() {
         kind: "adjustment",
         status: "active",
         note: payload.note.trim() || "Điều chỉnh số liệu tiết kiệm sinh lãi, không tính thu nhập/chi tiêu",
+        details: {
+          savingsAction: "Điều chỉnh sinh lãi",
+          savingName: saving?.name ?? "Tiết kiệm sinh lãi",
+          principal: Math.max(0, payload.principal),
+          annualRate: Math.max(0, payload.annualRate),
+          termMonths: Math.max(0, payload.termMonths),
+          expectedInterest: Math.max(0, payload.expectedInterest),
+          maturity: payload.maturity,
+        },
         countsAsIncome: false,
         countsAsExpense: false,
       });
@@ -521,6 +555,15 @@ export function SavingsPage() {
       kind: "transfer",
       status: "active",
       note: "Nhận gốc " + formatMoney(principal) + " và lãi " + formatMoney(interest) + ". Gốc không tính thu nhập.",
+      details: {
+        savingsAction: earlySettlement ? "Tất toán trước hạn" : "Tất toán",
+        savingName: settlement.name,
+        toAccount: receivingAccount.name,
+        principal,
+        interest,
+        total,
+        earlySettlement,
+      },
       countsAsIncome: false,
       countsAsExpense: false,
     });
@@ -535,6 +578,12 @@ export function SavingsPage() {
         kind: "savings_interest",
         status: "active",
         note: "Chỉ phần lãi tiết kiệm được tính là thu nhập tài chính.",
+        details: {
+          savingsAction: earlySettlement ? "Lãi tất toán trước hạn" : "Lãi tiết kiệm",
+          savingName: settlement.name,
+          interest,
+          total: interest,
+        },
         countsAsIncome: true,
         countsAsExpense: false,
       });
