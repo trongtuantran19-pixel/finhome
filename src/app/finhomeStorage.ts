@@ -1,4 +1,5 @@
 export const FINHOME_STORAGE_EVENT = "finhome:data-changed";
+export const FINHOME_EMPTY_MODE_KEY = "finhome.emptyMode.v1";
 
 export const finhomeStorageKeys = {
   personalAccounts: "finhome.personal.accounts.v1",
@@ -14,6 +15,11 @@ export const finhomeStorageKeys = {
 } as const;
 
 let notifyQueued = false;
+
+export function isFinhomeEmptyMode() {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(FINHOME_EMPTY_MODE_KEY) === "1" || new URLSearchParams(window.location.search).has("empty");
+}
 
 export function notifyFinhomeDataChanged() {
   if (typeof window === "undefined") return;
@@ -37,7 +43,9 @@ export function readStoredJson<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
   try {
     const raw = window.localStorage.getItem(key);
-    return raw ? JSON.parse(raw) as T : fallback;
+    if (raw) return JSON.parse(raw) as T;
+    if (isFinhomeEmptyMode() && Array.isArray(fallback)) return [] as T;
+    return fallback;
   } catch {
     return fallback;
   }
@@ -52,7 +60,7 @@ export function writeStoredJson(key: string, value: unknown) {
 export function readStoredNumber(key: string, fallback: number) {
   if (typeof window === "undefined") return fallback;
   const raw = window.localStorage.getItem(key);
-  if (raw === null) return fallback;
+  if (raw === null) return isFinhomeEmptyMode() ? 0 : fallback;
   const value = Number(raw);
   return Number.isFinite(value) ? value : fallback;
 }
@@ -66,4 +74,22 @@ export function writeStoredNumber(key: string, value: number) {
 export function appendStoredItem<T>(key: string, item: T) {
   const current = readStoredJson<T[]>(key, []);
   writeStoredJson(key, [item, ...current]);
+}
+
+
+export function resetFinhomeTestData() {
+  if (typeof window === "undefined") return;
+
+  window.localStorage.setItem(FINHOME_EMPTY_MODE_KEY, "1");
+  writeStoredJson(finhomeStorageKeys.personalAccounts, []);
+  writeStoredJson(finhomeStorageKeys.personalTransactions, []);
+  writeStoredJson(finhomeStorageKeys.personalCancelledTransactions, []);
+  writeStoredJson(finhomeStorageKeys.personalCards, []);
+  writeStoredJson(finhomeStorageKeys.businessSpaces, []);
+  writeStoredJson(finhomeStorageKeys.loans, []);
+  writeStoredJson(finhomeStorageKeys.savingsGoals, []);
+  writeStoredJson(finhomeStorageKeys.savingsInterest, []);
+  writeStoredNumber(finhomeStorageKeys.investmentCash, 0);
+  writeStoredJson(finhomeStorageKeys.investmentHoldings, []);
+  notifyFinhomeDataChanged();
 }

@@ -4,8 +4,8 @@ import { Plus, ArrowRightLeft, Eye, EyeOff, Edit3, MoreHorizontal, Wallet, Build
 import { cn } from "./ui/utils";
 import { WorkspaceTimeFilter, createDefaultWorkspaceTimeRange, isDateInWorkspaceRange, type WorkspaceTimeRange } from "./WorkspaceTimeFilter";
 import { QuickDateField, todayISO } from "./QuickDateField";
-import { businessSpaces, creditCards, formatMoney, investmentCash, metrics, personalAccounts, personalTransactions, savingGoals, transactionCategories, loans, type CashflowTransaction, type TransactionCategory, type TransactionType, type Loan } from "../finhomeData";
-import { finhomeStorageKeys, readStoredJson, readStoredNumber, writeStoredJson } from "../finhomeStorage";
+import { businessSpaces, creditCards, formatMoney, investmentCash, investmentHoldings, metrics, personalAccounts, personalTransactions, savingGoals, transactionCategories, loans, type CashflowTransaction, type InvestmentHolding, type TransactionCategory, type TransactionType, type Loan } from "../finhomeData";
+import { finhomeStorageKeys, isFinhomeEmptyMode, readStoredJson, readStoredNumber, writeStoredJson, writeStoredNumber } from "../finhomeStorage";
 
 const iconMap = { "Tiền mặt": Wallet, "Ngân hàng": Building, "Ví điện tử": Smartphone, "Ví khác": CreditCard } as const;
 type Account = typeof personalAccounts[0];
@@ -687,6 +687,11 @@ type TransferTarget = {
   color: string;
 };
 
+function shouldShowBusinessTransferTargets() {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("business") === "v2";
+}
+
 function TransferPickerSheet({ mode, targets, selectedId, onSelect, onClose }: { mode: "from" | "to"; targets: TransferTarget[]; selectedId?: string; onSelect: (target: TransferTarget) => void; onClose: () => void }) {
   const [query, setQuery] = useState("");
   const filtered = targets.filter((target) => `${target.name} ${target.group}`.toLowerCase().includes(query.trim().toLowerCase()));
@@ -726,12 +731,16 @@ function TransferSelectBox({ label, value, onClick }: { label: string; value?: T
 
 function TransferModal({ onClose, accounts, onConfirm }: { onClose: () => void; accounts: Account[]; onConfirm: (transaction: CashflowTransaction) => void }) {
   const activeAccounts = accounts.filter((account) => account.status !== "hidden" && account.status !== "closed");
-  const latestBusinessSpaces = readStoredJson<typeof businessSpaces>(finhomeStorageKeys.businessSpaces, businessSpaces);
+  const showBusinessTargets = shouldShowBusinessTransferTargets();
+  const latestBusinessSpaces = showBusinessTargets ? readStoredJson<typeof businessSpaces>(finhomeStorageKeys.businessSpaces, businessSpaces) : [];
   const latestSavingGoals = readStoredJson<typeof savingGoals>(finhomeStorageKeys.savingsGoals, savingGoals);
   const latestInvestmentCash = readStoredNumber(finhomeStorageKeys.investmentCash, investmentCash);
+  const businessTargets: TransferTarget[] = latestBusinessSpaces
+    .filter((space) => space.status === "active")
+    .map((space) => ({ id: `business-${space.id}`, name: space.name, group: "Kinh doanh" as const, balance: space.cash, icon: Building, color: "#8B2F13" }));
   const targets: TransferTarget[] = [
     ...activeAccounts.map((account) => ({ id: `personal-${account.id}`, name: account.name, group: "Cá nhân" as const, balance: account.balance, icon: iconMap[account.type], color: account.color })),
-    ...latestBusinessSpaces.filter((space) => space.status === "active").map((space) => ({ id: `business-${space.id}`, name: space.name, group: "Kinh doanh" as const, balance: space.cash, icon: Building, color: "#8B2F13" })),
+    ...businessTargets,
     { id: "investment-cash", name: "Tiền mặt đầu tư", group: "Đầu tư", balance: latestInvestmentCash, icon: ArrowUpRight, color: "#166534" },
     { id: "investment-tcbs", name: "TCBS", group: "Đầu tư", balance: latestInvestmentCash, icon: Building, color: "#B22222" },
     { id: "investment-crypto", name: "Crypto", group: "Đầu tư", icon: ArrowUpRight, color: "#111111" },
@@ -761,16 +770,24 @@ function TransferModal({ onClose, accounts, onConfirm }: { onClose: () => void; 
   const submit = () => {
     if (!from || !to || !canSubmit) return;
     const label = isPersonalToBusiness ? (businessTransferType === "capital" ? "Góp vốn kinh doanh" : "Bổ sung tiền mặt kinh doanh") : "Chuyển tiền nội bộ";
+    const transactionSpace = from.group === "Đầu tư" || to.group === "Đầu tư" ? "Đầu tư" : from.group === "Cá nhân" ? to.group : from.group;
     onConfirm({
       id: `transfer-${Date.now()}`,
       date,
       name: label,
-      space: from.group === "Cá nhân" ? to.group : from.group,
+      space: transactionSpace,
       source: `${from.name} -> ${to.name}`,
       amount: amountValue,
       kind: "transfer",
       status: "active",
       note: note.trim() || (isPersonalToBusiness ? (businessTransferType === "capital" ? "Góp vốn, không phải doanh thu" : "Bổ sung tiền mặt, không tăng vốn góp") : "Chuyển tiền nội bộ, không tính thu nhập hoặc chi tiêu"),
+      details: {
+        fromGroup: from.group,
+        toGroup: to.group,
+        fromName: from.name,
+        toName: to.name,
+        transferScope: transactionSpace,
+      },
       countsAsIncome: false,
       countsAsExpense: false,
     });
@@ -839,6 +856,122 @@ function CreditCardPaymentModal({ onClose, accounts, cards, onPay }: { onClose: 
   </BaseModal>;
 }
 
+
+function numberDetail(transaction: CashflowTransaction, key: string, fallback = 0) {
+  const raw = transaction.details?.[key];
+  const value = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function stringDetail(transaction: CashflowTransaction, key: string, fallback = "") {
+  const raw = transaction.details?.[key];
+  return typeof raw === "string" ? raw : fallback;
+}
+
+function loadInvestmentHoldingsForPersonal() {
+  return readStoredJson<InvestmentHolding[]>(finhomeStorageKeys.investmentHoldings, investmentHoldings);
+}
+
+function saveInvestmentHoldingsForPersonal(next: InvestmentHolding[]) {
+  writeStoredJson(finhomeStorageKeys.investmentHoldings, next);
+}
+
+function sameInvestmentEntry(entry: { date: string; quantity: number; price: number; fee: number }, transaction: CashflowTransaction) {
+  return entry.date === transaction.date
+    && entry.quantity === numberDetail(transaction, "quantity")
+    && entry.price === numberDetail(transaction, "price")
+    && entry.fee === numberDetail(transaction, "fee");
+}
+
+function removeOneInvestmentEntry<T extends { date: string; quantity: number; price: number; fee: number }>(entries: T[], transaction: CashflowTransaction) {
+  let removed = false;
+  return entries.filter((entry) => {
+    if (!removed && sameInvestmentEntry(entry, transaction)) {
+      removed = true;
+      return false;
+    }
+    return true;
+  });
+}
+
+function isInvestmentTransferName(name?: string) {
+  return ["Tiền mặt đầu tư", "TCBS", "Crypto"].includes(name ?? "");
+}
+
+function applyInvestmentTransferSideEffect(transaction: CashflowTransaction, direction: 1 | -1) {
+  if (transaction.kind !== "transfer") return false;
+  const [from, to] = transaction.source.split(" -> ");
+  const fromGroup = stringDetail(transaction, "fromGroup");
+  const toGroup = stringDetail(transaction, "toGroup");
+  const fromInvestment = fromGroup === "Đầu tư" || isInvestmentTransferName(from);
+  const toInvestment = toGroup === "Đầu tư" || isInvestmentTransferName(to);
+  if (!fromInvestment && !toInvestment) return false;
+
+  const currentCash = readStoredNumber(finhomeStorageKeys.investmentCash, investmentCash);
+  const delta = (toInvestment ? transaction.amount : 0) - (fromInvestment ? transaction.amount : 0);
+  writeStoredNumber(finhomeStorageKeys.investmentCash, Math.max(0, currentCash + delta * direction));
+  return false;
+}
+
+function applyInvestmentTransactionSideEffect(transaction: CashflowTransaction, direction: 1 | -1, updateAccounts: (updater: any) => void) {
+  if (!["investment_buy", "investment_sell"].includes(transaction.kind)) return false;
+
+  const currentCash = readStoredNumber(finhomeStorageKeys.investmentCash, investmentCash);
+  const holdings = loadInvestmentHoldingsForPersonal();
+  const code = stringDetail(transaction, "code", transaction.name.replace(/^Mua mới |^Mua thêm |^Mua |^Bán /, "").trim());
+  const quantity = numberDetail(transaction, "quantity");
+  const price = numberDetail(transaction, "price");
+  const fee = numberDetail(transaction, "fee");
+
+  if (transaction.kind === "investment_buy") {
+    const total = numberDetail(transaction, "total", transaction.amount);
+    writeStoredNumber(finhomeStorageKeys.investmentCash, currentCash - total * direction);
+    const nextHoldings = holdings.map((holding) => {
+      if (holding.code !== code) return holding;
+      const nextQuantity = Math.max(0, holding.quantity + quantity * direction);
+      const nextCapital = Math.max(0, holding.remainingCapital + total * direction);
+      return {
+        ...holding,
+        quantity: nextQuantity,
+        remainingCapital: nextCapital,
+        avgCost: nextQuantity > 0 ? nextCapital / nextQuantity : 0,
+        status: nextQuantity > 0 ? "holding" as const : "sold" as const,
+        buyHistory: direction === -1 ? removeOneInvestmentEntry(holding.buyHistory, transaction) : holding.buyHistory,
+      };
+    });
+    saveInvestmentHoldingsForPersonal(nextHoldings);
+    return true;
+  }
+
+  const proceeds = numberDetail(transaction, "proceeds", transaction.amount);
+  const capitalSold = numberDetail(transaction, "capitalSold");
+  const realizedPL = numberDetail(transaction, "realizedPL");
+  const keptInInvestment = numberDetail(transaction, "keptInInvestment", proceeds);
+  const transferToPersonal = numberDetail(transaction, "transferToPersonal");
+
+  writeStoredNumber(finhomeStorageKeys.investmentCash, currentCash + keptInInvestment * direction);
+  if (transferToPersonal > 0) {
+    const targetAccountName = transaction.source.split(" -> ")[1];
+    updateAccounts((items) => items.map((account) => account.name === targetAccountName ? { ...account, balance: account.balance + transferToPersonal * direction } : account));
+  }
+  const nextHoldings = holdings.map((holding) => {
+    if (holding.code !== code && holding.name !== transaction.source) return holding;
+    const nextQuantity = Math.max(0, holding.quantity - quantity * direction);
+    const nextCapital = Math.max(0, holding.remainingCapital - capitalSold * direction);
+    return {
+      ...holding,
+      quantity: nextQuantity,
+      remainingCapital: nextCapital,
+      avgCost: nextQuantity > 0 ? nextCapital / nextQuantity : 0,
+      realizedPL: holding.realizedPL - realizedPL * direction,
+      status: nextQuantity > 0 ? "holding" as const : holding.status,
+      sellHistory: direction === -1 ? removeOneInvestmentEntry(holding.sellHistory, transaction) : holding.sellHistory,
+    };
+  });
+  saveInvestmentHoldingsForPersonal(nextHoldings);
+  return true;
+}
+
 const PERSONAL_STORAGE_KEYS = {
   accounts: finhomeStorageKeys.personalAccounts,
   cards: finhomeStorageKeys.personalCards,
@@ -849,7 +982,7 @@ export function PersonalPage() {
   const [timeRange, setTimeRange] = useState<WorkspaceTimeRange>(createDefaultWorkspaceTimeRange);
   const [tab, setTab] = useState<Tab>("accounts");
   const [showHidden, setShowHidden] = useState(false);
-  const [hidden, setHidden] = useState<Set<string>>(new Set(personalAccounts.filter(a => a.status === "hidden").map(a => a.id)));
+  const [hidden, setHidden] = useState<Set<string>>(new Set(isFinhomeEmptyMode() ? [] : personalAccounts.filter(a => a.status === "hidden").map(a => a.id)));
   const [showTransfer, setShowTransfer] = useState(false);
   const [showTransaction, setShowTransaction] = useState(false);
   const [showCardPayment, setShowCardPayment] = useState(false);
@@ -894,7 +1027,8 @@ export function PersonalPage() {
       if (accountSort === "type") return a.type.localeCompare(b.type, "vi") || a.name.localeCompare(b.name, "vi");
       return accounts.indexOf(b) - accounts.indexOf(a);
     });
-  const allTransactions = [...extraTransactions, ...personalTransactions].map((tx) => cancelledTxIds.has(tx.id) ? { ...tx, status: "cancelled" as const } : tx);
+  const basePersonalTransactions = isFinhomeEmptyMode() ? [] : personalTransactions;
+  const allTransactions = [...extraTransactions, ...basePersonalTransactions].map((tx) => cancelledTxIds.has(tx.id) ? { ...tx, status: "cancelled" as const } : tx);
   const periodTransactions = allTransactions.filter((tx) => isDateInWorkspaceRange(tx.date, timeRange));
   const currentPersonalBalance = accounts.filter(a => a.status !== "hidden").reduce((s, a) => s + a.balance, 0);
   const isReportExpense = (transaction: CashflowTransaction) => transaction.status !== "cancelled" && Boolean(transaction.countsAsExpense) && !["credit_card_payment", "loan_principal"].includes(transaction.kind);
@@ -914,6 +1048,8 @@ export function PersonalPage() {
     { id: "history" as const, label: "Lịch sử giao dịch", count: allTransactions.length },
   ];
   const applyTransactionToAccounts = (transaction: CashflowTransaction, direction: 1 | -1) => {
+    if (applyInvestmentTransactionSideEffect(transaction, direction, updateAccounts)) return;
+    applyInvestmentTransferSideEffect(transaction, direction);
     const [from, to] = transaction.source.split(" -> ");
     if (transaction.kind === "credit_card_spend") {
       updateCards((items) => items.map((card) => card.name === transaction.source ? { ...card, used: Math.max(0, card.used + transaction.amount * direction) } : card));
@@ -1020,13 +1156,21 @@ export function PersonalPage() {
   return (
     <div className="min-h-full bg-[#F9F9F9]"><div className="px-6 lg:px-8 py-8 max-w-[1200px] mx-auto space-y-6">
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}><div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold text-[#A3A3A3] uppercase tracking-[0.1em] mb-1">Ví trung tâm</p><h1 className="text-[1.75rem] font-semibold text-[#111111] tracking-tight leading-none">Cá nhân</h1></div><div className="flex flex-wrap items-center justify-end gap-2"><WorkspaceTimeFilter onChange={setTimeRange} /><button onClick={() => setShowTransfer(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-black/[0.12] bg-white text-xs font-semibold text-[#111111] shadow-sm hover:bg-[#F9F6F1]"><ArrowRightLeft className="size-3.5 text-[#111111]" /> Chuyển tiền</button><button className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#B22222] text-xs font-semibold text-white" onClick={() => setShowTransaction(true)}><Plus className="size-3.5" /> Giao dịch</button></div></div></motion.div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[
-        ["Tổng số dư cá nhân", formatMoney(currentPersonalBalance), "Tổng ví đang sử dụng", "text-[#111111]"],
-        ["Thu nhập trong kỳ", `+${formatMoney(currentIncome)}`, "Chỉ thu nhập thực tế", "text-[#166534]"],
-        ["Chi tiêu trong kỳ", `-${formatMoney(currentExpenses)}`, "Gồm chi tiêu tiền mặt và bằng thẻ", "text-[#B22222]"],
-        ["Chi phí tài chính", `-${formatMoney(currentFinancialCosts)}`, "Lãi vay, phí vay, phí thẻ", "text-[#B45309]"],
-      ].map(([label, value, sub, color]) => <div key={label} className="rounded-2xl bg-white border border-black/[0.07] p-4 shadow-[0_2px_8px_rgba(0,0,0,0.05)]"><p className="text-[10px] font-semibold text-[#A3A3A3] uppercase tracking-[0.1em] mb-2">{label}</p><p className={cn("text-xl font-semibold tabular-nums", color)}>{value}</p><p className="text-xs text-[#666666] mt-2">{sub}</p></div>)}</div>
-      <div className="flex gap-1 bg-black/[0.04] p-1 rounded-xl w-fit flex-wrap">{displayedTabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} className={cn("relative px-4 py-2 rounded-lg text-xs font-semibold", tab === t.id ? "bg-white text-[#111111] shadow-sm" : "text-[#A3A3A3]")}>{t.label}<span className="ml-1.5 text-[9px]">{t.count}</span></button>)}</div>
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,0.42fr)_minmax(0,0.58fr)]">
+        <div className="rounded-[28px] border border-black/[0.07] bg-[#111111] p-6 text-white shadow-[0_18px_45px_rgba(0,0,0,0.10)]">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/55">Tổng số dư cá nhân</p>
+          <p className="mt-3 text-3xl font-semibold leading-tight text-white sm:text-4xl">{formatMoney(currentPersonalBalance)}</p>
+          <p className="mt-3 text-sm text-white/62">Tổng ví đang sử dụng</p>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {[
+            ["Thu nhập trong kỳ", `+${formatMoney(currentIncome)}`, "Chỉ thu nhập thực tế", "text-[#166534]"],
+            ["Chi tiêu trong kỳ", `-${formatMoney(currentExpenses)}`, "Tiền mặt và thẻ", "text-[#B22222]"],
+            ["Chi phí tài chính", `-${formatMoney(currentFinancialCosts)}`, "Lãi vay, phí thẻ", "text-[#B45309]"],
+          ].map(([label, value, sub, color]) => <div key={label} className="rounded-[22px] bg-white border border-black/[0.07] p-4 shadow-[0_8px_24px_rgba(0,0,0,0.045)] transition hover:-translate-y-0.5 hover:shadow-[0_14px_32px_rgba(0,0,0,0.07)]"><p className="text-[10px] font-semibold text-[#A3A3A3] uppercase tracking-[0.1em] mb-2">{label}</p><p className={cn("text-xl font-semibold tabular-nums", color)}>{value}</p><p className="text-xs text-[#666666] mt-2">{sub}</p></div>)}
+        </div>
+      </div>
+      <div className="flex gap-1 bg-black/[0.04] p-1 rounded-2xl w-fit max-w-full flex-wrap">{displayedTabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} className={cn("relative px-4 py-2 rounded-xl text-xs font-semibold transition", tab === t.id ? "bg-white text-[#111111] shadow-sm" : "text-[#A3A3A3]")}>{t.label}<span className="ml-1.5 text-[9px]">{t.count}</span></button>)}</div>
       <AnimatePresence mode="wait">
         {tab === "accounts" && <motion.div key="accounts" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
           <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -1040,7 +1184,7 @@ export function PersonalPage() {
               <button onClick={() => setShowAddAccount(true)} className="flex items-center gap-1.5 rounded-xl bg-[#B22222] px-3.5 py-2.5 text-xs font-semibold text-white shadow-[0_4px_12px_rgba(178,34,34,0.18)] hover:bg-[#C93535]"><Plus className="size-3.5" /> Thêm ví</button>
             </div>
           </div>
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3">
             {visibleAccounts.map(acc => <AccountCard key={acc.id} acc={acc} hidden={hidden.has(acc.id)} onOpen={() => openAccount(acc, "detail")} />)}
           </div>
           {!visibleAccounts.length && <div className="rounded-2xl border border-dashed border-black/[0.12] bg-white px-4 py-8 text-center text-sm text-[#666666]">Không tìm thấy ví phù hợp.</div>}

@@ -1,4 +1,5 @@
-import { ArrowRightLeft, FileText } from "lucide-react";
+import { useState } from "react";
+import { ArrowRightLeft, FileText, MoreHorizontal } from "lucide-react";
 import { formatMoney, type CashflowTransaction } from "../finhomeData";
 
 function displayDate(value: string) {
@@ -94,7 +95,8 @@ function amountColor(tx: CashflowTransaction) {
   return "text-[#111111]";
 }
 
-export function WorkspaceTransactionHistory({ title, subtitle, transactions }: { title: string; subtitle: string; transactions: CashflowTransaction[] }) {
+export function WorkspaceTransactionHistory({ title, subtitle, transactions, onAdjustTransaction }: { title: string; subtitle: string; transactions: CashflowTransaction[]; onAdjustTransaction?: (transaction: CashflowTransaction) => void }) {
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const items = [...transactions].sort((a, b) => b.date.localeCompare(a.date));
   return <section className="overflow-hidden rounded-2xl border border-black/[0.07] bg-white shadow-sm">
     <div className="flex items-center justify-between gap-4 border-b border-black/[0.05] px-5 py-4">
@@ -116,7 +118,13 @@ export function WorkspaceTransactionHistory({ title, subtitle, transactions }: {
                 <p className="truncate text-sm font-semibold text-[#111111]">{tx.name}</p>
                 <p className="mt-0.5 truncate text-xs text-[#A3A3A3]">{displayDate(tx.date)} · {tx.source}</p>
               </div>
-              <p className={`shrink-0 text-sm font-semibold tabular-nums ${amountColor(tx)}`}>{formatMoney(Math.abs(tx.amount))}</p>
+              <div className="relative flex shrink-0 items-start gap-2">
+                <p className={`text-sm font-semibold tabular-nums ${amountColor(tx)}`}>{formatMoney(Math.abs(tx.amount))}</p>
+                {onAdjustTransaction && <button type="button" aria-label={"T\u00f9y ch\u1ecdn giao d\u1ecbch"} onClick={() => setOpenMenuId(openMenuId === tx.id ? null : tx.id)} className="flex size-8 items-center justify-center rounded-full text-[#A3A3A3] transition-colors hover:bg-[#F5F5F5] hover:text-[#111111]"><MoreHorizontal className="size-4" /></button>}
+                {onAdjustTransaction && openMenuId === tx.id && <div className="absolute right-0 top-8 z-20 w-48 overflow-hidden rounded-2xl border border-black/[0.08] bg-white p-1 shadow-[0_18px_45px_rgba(0,0,0,0.14)]">
+                  <button type="button" onClick={() => { setOpenMenuId(null); onAdjustTransaction(tx); }} className="w-full rounded-xl px-3 py-2.5 text-left text-xs font-semibold text-[#111111] hover:bg-[#F9F6F1]">{"\u0110i\u1ec1u ch\u1ec9nh giao d\u1ecbch"}</button>
+                </div>}
+              </div>
             </div>
             {rows.length > 0 && <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {rows.map(([label, value]) => <div key={label} className="rounded-xl bg-[#F8F6F3] px-3 py-2">

@@ -14,6 +14,38 @@
 
     <body>
       
+      
+      <script>
+        // FINHOME_RESET_BOOTSTRAP: clear app data before React reads localStorage.
+        (function () {
+          try {
+            var params = new URLSearchParams(window.location.search);
+            if (params.get("reset") !== "1") return;
+            var keys = [
+              "finhome.personal.accounts.v1",
+              "finhome.personal.extraTransactions.v1",
+              "finhome.personal.cancelledTxIds.v1",
+              "finhome.personal.cards.v1",
+              "finhome.business.spaces.v1",
+              "finhome.loans.items.v1",
+              "finhome.savings.goals.v1",
+              "finhome.savings.interest.v1",
+              "finhome.investment.cash.v1",
+              "finhome.investment.holdings.v1"
+            ];
+            keys.forEach(function (key) {
+              if (key === "finhome.investment.cash.v1") window.localStorage.setItem(key, "0");
+              else window.localStorage.setItem(key, "[]");
+            });
+            window.localStorage.setItem("finhome.emptyMode.v1", "1");
+            params.delete("reset");
+            params.set("empty", "1");
+            window.history.replaceState(null, "", window.location.pathname + "?" + params.toString() + window.location.hash);
+          } catch (error) {
+            console.error("FinHome reset failed", error);
+          }
+        })();
+      </script>
       <div id="root"></div>
       <script type="module" src="/src/main.tsx"></script>
       

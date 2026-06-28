@@ -99,13 +99,16 @@ export type InterestSaving = {
 export type Loan = {
   id: string;
   name: string;
-  type: "Vay ngân hàng" | "Vay kinh doanh" | "Vay cá nhân" | "Thẻ tín dụng";
+  type: "Vay ngân hàng" | "Vay mua nhà" | "Vay mua xe" | "Vay kinh doanh" | "Vay bạn bè/người thân" | "Vay công ty" | "Vay tiêu dùng" | "Vay cá nhân" | "Khoản vay khác" | "Thẻ tín dụng";
   original: number;
   outstanding: number;
   rate: number;
   monthly: number;
+  startDate?: string;
   nextDue: string;
+  termMonths?: number;
   bank: string;
+  note?: string;
   status: "active" | "dueSoon" | "overdue" | "settled" | "closed";
   paidInterest: number;
   history: { date: string; total: number; principal: number; interest: number }[];
@@ -122,6 +125,7 @@ export type CreditCardDebt = {
   color: string;
   last4: string;
   status: Status;
+  note?: string;
 };
 
 export const personalAccounts: PersonalAccount[] = [

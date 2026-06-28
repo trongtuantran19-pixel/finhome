@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { Wallet, TrendingDown, TrendingUp, ArrowUpRight, ArrowDownRight, AlertCircle, ChevronRight, CalendarDays, ChevronDown, Check, X } from "lucide-react";
 import { cn } from "./ui/utils";
-import { finhomeStorageKeys, readStoredJson, readStoredNumber } from "../finhomeStorage";
+import { finhomeStorageKeys, isFinhomeEmptyMode, readStoredJson, readStoredNumber } from "../finhomeStorage";
 import {
   assetAllocation as defaultAssetAllocation,
   businessSpaces,
@@ -288,7 +288,7 @@ function getOverviewModel(): OverviewModel {
   const interestItems = readStoredJson<InterestSaving[]>(finhomeStorageKeys.savingsInterest, interestSavings);
   const investmentSnapshot = getInvestmentSnapshot();
 
-  const baseTransactions = personalTransactions.map((tx) => cancelledIds.has(tx.id) ? { ...tx, status: "cancelled" as const } : tx);
+  const baseTransactions = isFinhomeEmptyMode() ? [] : personalTransactions.map((tx) => cancelledIds.has(tx.id) ? { ...tx, status: "cancelled" as const } : tx);
   const businessTransactions = businesses.flatMap((business) => business.transactions ?? []);
   const allTransactions = [...extraTransactions, ...baseTransactions, ...businessTransactions]
     .filter(isValidTx)
@@ -572,15 +572,17 @@ export function OverviewPage({ dataVersion = 0 }: { dataVersion?: number }) {
           {period === "custom" && <p className="mt-3 text-xs font-medium text-[#666666]">Đang xem: {formatDisplayDate(customFrom)} → {formatDisplayDate(customTo)}</p>}
         </motion.div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          <KPICard title="Tổng tài sản" value={formatMoney(overview.metrics.totalAssets)} sub="Cá nhân + kinh doanh + đầu tư + tiết kiệm" tone="dark" delay={0.05} />
-          <KPICard title="Tổng nợ" value={formatMoney(overview.metrics.totalDebt)} sub="Dư nợ vay + dư nợ thẻ tín dụng" tone="red" delay={0.1} />
-          <KPICard title="Tài sản ròng" value={formatMoney(overview.metrics.netWorth)} sub="Tổng tài sản trừ tổng nợ" tone="green" delay={0.15} />
-          <KPICard title="Dòng tiền" value={formatMoney(periodCashflow)} sub="Thu nhập thực tế trừ chi tiêu thực tế trong khoảng đang xem" tone={periodCashflow >= 0 ? "green" : "red"} delay={0.2} />
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,0.46fr)_minmax(0,0.54fr)]">
+          <KPICard title="Tổng tài sản" value={formatMoney(overview.metrics.totalAssets)} sub="Cá nhân + đầu tư + tiết kiệm" tone="dark" delay={0.05} />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <KPICard title="Tổng nợ" value={formatMoney(overview.metrics.totalDebt)} sub="Dư nợ vay + thẻ" tone="red" delay={0.1} />
+            <KPICard title="Tài sản ròng" value={formatMoney(overview.metrics.netWorth)} sub="Tài sản trừ nợ" tone="green" delay={0.15} />
+            <KPICard title="Dòng tiền" value={formatMoney(periodCashflow)} sub="Thu - chi trong khoảng" tone={periodCashflow >= 0 ? "green" : "red"} delay={0.2} />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-          <motion.div {...fadeUp(0.1)} className="xl:col-span-2 bg-white rounded-2xl border border-black/[0.07] shadow-[0_2px_8px_rgba(0,0,0,0.05)] p-6">
+          <motion.div {...fadeUp(0.1)} className="xl:col-span-2 bg-white rounded-[28px] border border-black/[0.06] shadow-[0_10px_30px_rgba(0,0,0,0.045)] p-6">
             <div className="flex items-start justify-between mb-6">
               <div><p className="text-xs font-semibold text-[#A3A3A3] uppercase tracking-[0.1em] mb-1">Thu chi trong khoảng</p><p className="text-lg font-semibold text-[#111111]">Dòng tiền theo thời gian</p></div>
               <div className="flex gap-4"><span className="text-xs text-[#166534] font-semibold">Thu {formatVnd(periodIncome)}</span><span className="text-xs text-[#B22222] font-semibold">Chi {formatVnd(periodExpenses)}</span></div>
@@ -596,7 +598,7 @@ export function OverviewPage({ dataVersion = 0 }: { dataVersion?: number }) {
             </ResponsiveContainer>
           </motion.div>
 
-          <motion.div {...fadeUp(0.15)} className="bg-white rounded-2xl border border-black/[0.07] shadow-[0_2px_8px_rgba(0,0,0,0.05)] p-6">
+          <motion.div {...fadeUp(0.15)} className="bg-white rounded-[28px] border border-black/[0.06] shadow-[0_10px_30px_rgba(0,0,0,0.045)] p-6">
             <p className="text-xs font-semibold text-[#A3A3A3] uppercase tracking-[0.1em] mb-1">Phân bổ tài sản</p>
             <p className="text-lg font-semibold text-[#111111] tracking-tight mb-5">Tiền đang nằm ở đâu</p>
             <div className="relative mx-auto mb-5 h-[210px] max-w-[260px]">
@@ -644,14 +646,14 @@ export function OverviewPage({ dataVersion = 0 }: { dataVersion?: number }) {
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-          <motion.div {...fadeUp(0.2)} className="xl:col-span-2 bg-white rounded-2xl border border-black/[0.07] shadow-[0_2px_8px_rgba(0,0,0,0.05)] overflow-hidden">
+          <motion.div {...fadeUp(0.2)} className="xl:col-span-2 bg-white rounded-[28px] border border-black/[0.06] shadow-[0_10px_30px_rgba(0,0,0,0.045)] overflow-hidden">
             <div className="flex items-center justify-between px-6 py-4 border-b border-black/[0.05]"><div><p className="text-xs font-semibold text-[#A3A3A3] uppercase tracking-[0.1em]">Lịch sử</p><p className="text-base font-semibold text-[#111111]">Giao dịch gần đây</p></div><button type="button" onClick={() => setShowAllTransactions(true)} className="flex items-center gap-1 text-[#B22222] text-xs font-semibold">Xem tất cả <ChevronRight className="size-3.5" /></button></div>
             <div>{visibleTransactions.length ? visibleTransactions.map((tx) => <TransactionRow key={`${tx.id}-${tx.date}`} tx={tx} />) : <p className="px-6 py-8 text-center text-sm text-[#A3A3A3]">Không có giao dịch trong khoảng này.</p>}</div>
           </motion.div>
 
           <div className="space-y-5">
-            <motion.div {...fadeUp(0.25)} className="bg-white rounded-2xl border border-black/[0.07] shadow-[0_2px_8px_rgba(0,0,0,0.05)] p-5"><div className="flex items-center gap-2 mb-4"><AlertCircle className="size-4 text-[#B22222]" /><p className="text-base font-semibold text-[#111111]">Khoản cần chú ý</p></div><div className="space-y-3">{alerts.map((a) => <p key={a} className="rounded-xl bg-[#F9F6F1] px-3 py-2 text-xs text-[#666666]">{a}</p>)}</div></motion.div>
-            <motion.div {...fadeUp(0.3)} className="bg-white rounded-2xl border border-black/[0.07] shadow-[0_2px_8px_rgba(0,0,0,0.05)] p-5"><p className="text-base font-semibold text-[#111111] mb-3">Quy tắc đang áp dụng</p><div className="space-y-2">{ruleCards.map((r) => <p key={r} className="text-xs leading-relaxed text-[#666666]">• {r}</p>)}</div></motion.div>
+            <motion.div {...fadeUp(0.25)} className="bg-white rounded-[28px] border border-black/[0.06] shadow-[0_10px_30px_rgba(0,0,0,0.045)] p-5"><div className="flex items-center gap-2 mb-4"><AlertCircle className="size-4 text-[#B22222]" /><p className="text-base font-semibold text-[#111111]">Khoản cần chú ý</p></div><div className="space-y-3">{alerts.map((a) => <p key={a} className="rounded-xl bg-[#F9F6F1] px-3 py-2 text-xs text-[#666666]">{a}</p>)}</div></motion.div>
+            <motion.div {...fadeUp(0.3)} className="bg-white rounded-[28px] border border-black/[0.06] shadow-[0_10px_30px_rgba(0,0,0,0.045)] p-5"><p className="text-base font-semibold text-[#111111] mb-3">Quy tắc đang áp dụng</p><div className="space-y-2">{ruleCards.map((r) => <p key={r} className="text-xs leading-relaxed text-[#666666]">• {r}</p>)}</div></motion.div>
           </div>
         </div>
       </div>

@@ -427,7 +427,30 @@ export function InvestmentPage() {
       countsAsExpense: false,
     })),
   ]);
-  const investmentTransactions = [...storedInvestmentTransactions, ...holdingTransactions].filter((tx, index, items) => items.findIndex((item) => item.id === tx.id) === index);
+  function investmentTransactionCode(tx: CashflowTransaction) {
+    const detailCode = typeof tx.details?.code === "string" ? tx.details.code : "";
+    if (detailCode) return detailCode.trim().toUpperCase();
+    return tx.name.replace(/^Mua mới\s+|^Mua thêm\s+|^Mua\s+|^Bán\s+/i, "").trim().toUpperCase();
+  }
+
+  function investmentTransactionSignature(tx: CashflowTransaction) {
+    return [tx.kind, tx.date, investmentTransactionCode(tx), Math.round(tx.amount)].join("|");
+  }
+
+  const holdingTransactionBySignature = new Map(holdingTransactions.map((tx) => [investmentTransactionSignature(tx), tx]));
+  const storedInvestmentSignatures = new Set(storedInvestmentTransactions.map(investmentTransactionSignature));
+  const normalizedStoredInvestmentTransactions = storedInvestmentTransactions.map((tx) => {
+    const holdingTx = holdingTransactionBySignature.get(investmentTransactionSignature(tx));
+    if (!holdingTx) return tx;
+    return {
+      ...holdingTx,
+      ...tx,
+      note: tx.note || holdingTx.note,
+      details: { ...(holdingTx.details ?? {}), ...(tx.details ?? {}) },
+    };
+  });
+  const syntheticOnlyHoldingTransactions = holdingTransactions.filter((tx) => !storedInvestmentSignatures.has(investmentTransactionSignature(tx)));
+  const investmentTransactions = [...normalizedStoredInvestmentTransactions, ...syntheticOnlyHoldingTransactions].filter((tx, index, items) => items.findIndex((item) => item.id === tx.id) === index);
   const periodInvestmentTransactions = investmentTransactions.filter((tx) => isDateInWorkspaceRange(tx.date, timeRange));
   const [modal, setModal] = useState<ModalKind>(null);
   const [pendingSale, setPendingSale] = useState<PendingSale | null>(null);
@@ -586,6 +609,16 @@ export function InvestmentPage() {
   }
 
 
+  function openAdjustFromTransaction(transaction: CashflowTransaction) {
+    const code = typeof transaction.details?.code === "string"
+      ? transaction.details.code
+      : transaction.name.replace(/^Mua mới\s+|^Mua thêm\s+|^Mua\s+|^Bán\s+/i, "").trim();
+    const target = holdings.find((item) => item.code.toLowerCase() === code.toLowerCase() || item.name.toLowerCase() === String(transaction.details?.holdingName ?? "").toLowerCase());
+    if (!target) return;
+    setSelectedId(target.id);
+    setModal("adjust");
+  }
+
   function adjustInvestment(payload: { holdingId: string; quantity: number; remainingCapital: number; realizedPL: number; date: string; note: string }) {
     const holding = holdings.find((item) => item.id === payload.holdingId);
     if (!holding) return;
@@ -628,7 +661,7 @@ export function InvestmentPage() {
     { label: "Tổng vốn đang đầu tư", value: formatMoney(investedCapital), sub: "Chỉ vốn còn nắm giữ", icon: BarChart2, color: "text-[#111111]" },
     { label: "Số khoản đang nắm giữ", value: String(active.length), sub: "Không gồm mã đã bán hết", icon: TrendingUp, color: "text-[#111111]" },
     { label: "Lãi/lỗ đã chốt", value: formatMoney(realizedPL), sub: "Chỉ ghi nhận khi bán", icon: TrendingUp, color: realizedPL >= 0 ? "text-[#166534]" : "text-[#B22222]" },
-    { label: "Thu nhập tài chình", value: formatMoney(financialIncome), sub: "Lãi đầu tư đã chốt", icon: DollarSign, color: "text-[#166534]" },
+    { label: "Thu nhập tài chính", value: formatMoney(financialIncome), sub: "Lãi đầu tư đã chốt", icon: DollarSign, color: "text-[#166534]" },
   ];
 
   return (
@@ -648,21 +681,35 @@ export function InvestmentPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          {kpis.map((item) => {
-            const Icon = item.icon;
-            return (
-              <div key={item.label} className="rounded-2xl border border-black/[0.07] bg-white p-4">
-                <div className="mb-2 flex items-center justify-between"><span className="text-[10px] font-semibold uppercase text-[#A3A3A3]">{item.label}</span><Icon className="size-3.5 text-[#D4D4D4]" /></div>
-                <p className={cn("text-lg font-semibold", item.color)}>{item.value}</p>
-                <p className="mt-1 text-[10px] text-[#A3A3A3]">{item.sub}</p>
-              </div>
-            );
-          })}
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,0.56fr)_minmax(0,0.44fr)]">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {kpis.slice(0, 2).map((item, index) => {
+              const Icon = item.icon;
+              return (
+                <div key={item.label} className={cn("rounded-[28px] border border-black/[0.07] p-5 shadow-[0_10px_30px_rgba(0,0,0,0.045)]", index === 0 ? "bg-[#111111] text-white" : "bg-white text-[#111111]")}>
+                  <div className="mb-5 flex items-center justify-between"><span className={cn("text-[10px] font-semibold uppercase tracking-[0.1em]", index === 0 ? "text-white/55" : "text-[#A3A3A3]")}>{item.label}</span><Icon className={cn("size-4", index === 0 ? "text-white/30" : "text-[#D4D4D4]")} /></div>
+                  <p className={cn("text-2xl font-semibold leading-tight sm:text-3xl", index === 0 ? "text-white" : item.color)}>{item.value}</p>
+                  <p className={cn("mt-3 text-xs", index === 0 ? "text-white/58" : "text-[#737373]")}>{item.sub}</p>
+                </div>
+              );
+            })}
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {kpis.slice(2).map((item) => {
+              const Icon = item.icon;
+              return (
+                <div key={item.label} className="rounded-[22px] border border-black/[0.07] bg-white p-4 shadow-sm">
+                  <div className="mb-3 flex items-center justify-between"><span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#A3A3A3]">{item.label}</span><Icon className="size-3.5 text-[#D4D4D4]" /></div>
+                  <p className={cn("text-lg font-semibold leading-tight", item.color)}>{item.value}</p>
+                  <p className="mt-2 hidden text-[10px] text-[#A3A3A3] sm:block">{item.sub}</p>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-          <div className="overflow-hidden rounded-2xl border border-black/[0.07] bg-white xl:col-span-2">
+          <div className="overflow-hidden rounded-[28px] border border-black/[0.07] bg-white shadow-[0_10px_30px_rgba(0,0,0,0.045)] xl:col-span-2">
             <div className="border-b border-black/[0.05] px-6 py-4">
               <p className="text-xs font-semibold uppercase text-[#A3A3A3]">Đang nắm giữ</p>
               <p className="font-semibold text-[#111111]">Danh sách khoản đầu tư</p>
@@ -676,7 +723,7 @@ export function InvestmentPage() {
                 </thead>
                 <tbody>
                   {active.map((holding) => (
-                    <tr key={holding.id} onClick={() => setSelectedId(holding.id)} className="cursor-pointer border-b border-black/[0.04] hover:bg-[#FAFAFA]">
+                    <tr key={holding.id} onClick={() => setSelectedId(holding.id)} className="h-16 cursor-pointer border-b border-black/[0.04] transition hover:bg-[#F8F6F3]">
                       <td className="px-4 py-3 font-semibold">{holding.code}</td>
                       <td className="px-4 py-3 text-sm">{holding.name}</td>
                       <td className="px-4 py-3 text-sm">{holding.type}</td>
@@ -717,7 +764,7 @@ export function InvestmentPage() {
 
       </div>
 
-      <WorkspaceTransactionHistory title="Lịch sử giao dịch Đầu tư" subtitle="Chuyển tiền, mua và bán tài sản đầu tư." transactions={periodInvestmentTransactions} />
+      <WorkspaceTransactionHistory title="Lịch sử giao dịch Đầu tư" subtitle="Chuyển tiền, mua và bán tài sản đầu tư." transactions={periodInvestmentTransactions} onAdjustTransaction={openAdjustFromTransaction} />
 
       <AnimatePresence>
         {modal === "transfer" && <TransferModal cash={cash} onClose={() => setModal(null)} onConfirm={transferOut} />}
