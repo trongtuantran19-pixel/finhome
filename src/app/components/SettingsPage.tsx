@@ -1,17 +1,19 @@
-﻿import { useState } from "react";
+﻿import { useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Bell, ChevronDown, ChevronRight, CreditCard, EyeOff, Globe, Layers3, Pencil, Plus, Shield, Trash2, User } from "lucide-react";
+import { Bell, ChevronDown, ChevronRight, CreditCard, Database, Download, EyeOff, Globe, Layers3, Pencil, Plus, Shield, Trash2, Upload, User } from "lucide-react";
 import { cn } from "./ui/utils";
 import { FormSelect } from "./FormSelect";
 import { transactionCategories, type TransactionCategory, type TransactionType } from "../finhomeData";
+import { FINHOME_EMPTY_MODE_KEY, finhomeStorageKeys, notifyFinhomeDataChanged } from "../finhomeStorage";
 
-type Section = "profile" | "categories" | "notifications" | "security" | "preferences";
+type Section = "profile" | "categories" | "backup" | "notifications" | "security" | "preferences";
 type CategoryModal = { mode: "addParent" | "addChild" | "edit"; category?: TransactionCategory; parent?: TransactionCategory } | null;
 
 const transactionTypes: TransactionType[] = ["Thu nhập", "Chi tiêu", "Kinh doanh", "Đầu tư", "Tiết kiệm", "Khoản vay"];
 const sections: { id: Section; label: string; icon: React.ComponentType<{ className?: string; strokeWidth?: number }> }[] = [
   { id: "profile", label: "Hồ sơ", icon: User },
   { id: "categories", label: "Danh mục", icon: Layers3 },
+  { id: "backup", label: "Dữ liệu", icon: Database },
   { id: "notifications", label: "Thông báo", icon: Bell },
   { id: "security", label: "Bảo mật", icon: Shield },
   { id: "preferences", label: "Tùy chọn", icon: Globe },
@@ -27,6 +29,155 @@ function Panel({ title, sub, children }: { title: string; sub?: string; children
 
 function Row({ label, sub, children }: { label: string; sub?: string; children: React.ReactNode }) {
   return <div className="flex items-center justify-between border-b border-black/[0.05] px-6 py-4 last:border-0"><div><p className="text-sm font-medium text-[#111111]">{label}</p>{sub && <p className="mt-0.5 text-xs text-[#A3A3A3]">{sub}</p>}</div><div className="ml-6 shrink-0">{children}</div></div>;
+}
+
+
+const backupKeys = Object.values(finhomeStorageKeys);
+
+type BackupFile = {
+  appName?: string;
+  version?: string;
+  exportedAt?: string;
+  data?: Record<string, unknown>;
+};
+
+function safeParseStorageValue(raw: string) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function hasMeaningfulBackupData(data: Record<string, unknown>) {
+  return Object.values(data).some((value) => {
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === "number") return value !== 0;
+    if (typeof value === "string") return value.trim() !== "" && value !== "0" && value !== "[]";
+    if (value && typeof value === "object") return Object.keys(value).length > 0;
+    return false;
+  });
+}
+
+function BackupPanel() {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const showNotice = (type: "success" | "error", text: string) => {
+    setNotice({ type, text });
+    window.setTimeout(() => setNotice(null), 3200);
+  };
+
+  const collectBackupData = () => {
+    const data: Record<string, unknown> = {};
+    for (const key of backupKeys) {
+      const raw = window.localStorage.getItem(key);
+      if (raw !== null) data[key] = safeParseStorageValue(raw);
+    }
+    return data;
+  };
+
+  const downloadBackup = () => {
+    const data = collectBackupData();
+    if (!hasMeaningfulBackupData(data)) {
+      showNotice("error", "Chưa có dữ liệu để tải xuống.");
+      return;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const payload = {
+      appName: "FinHome",
+      version: "ver-1",
+      exportedAt: new Date().toISOString(),
+      data,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `finhome-backup-${today}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showNotice("success", "Đã tải dữ liệu FinHome xuống.");
+  };
+
+  const restoreBackup = async (file: File) => {
+    try {
+      const parsed = JSON.parse(await file.text()) as BackupFile;
+      if (parsed.appName !== "FinHome" || parsed.version !== "ver-1" || !parsed.data || typeof parsed.data !== "object" || Array.isArray(parsed.data)) {
+        showNotice("error", "File backup không hợp lệ.");
+        return;
+      }
+
+      const allowedKeys = new Set(backupKeys);
+      const entries = Object.entries(parsed.data).filter(([key]) => allowedKeys.has(key));
+      if (entries.length === 0 || !hasMeaningfulBackupData(Object.fromEntries(entries))) {
+        showNotice("error", "File backup không có dữ liệu FinHome hợp lệ.");
+        return;
+      }
+
+      const confirmed = window.confirm("Dữ liệu hiện tại sẽ được thay thế bằng dữ liệu trong file backup. Bạn có chắc chắn không?");
+      if (!confirmed) return;
+
+      for (const key of backupKeys) window.localStorage.removeItem(key);
+      window.localStorage.removeItem(FINHOME_EMPTY_MODE_KEY);
+
+      for (const [key, value] of entries) {
+        if (typeof value === "string") {
+          window.localStorage.setItem(key, value);
+        } else if (typeof value === "number" || typeof value === "boolean") {
+          window.localStorage.setItem(key, String(value));
+        } else {
+          window.localStorage.setItem(key, JSON.stringify(value));
+        }
+      }
+
+      notifyFinhomeDataChanged();
+      showNotice("success", "Đã khôi phục dữ liệu FinHome.");
+      window.setTimeout(() => window.location.reload(), 700);
+    } catch {
+      showNotice("error", "Không đọc được file backup.");
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const clearAllData = () => {
+    const confirmed = window.confirm("Thao tác này sẽ xóa toàn bộ dữ liệu FinHome trên thiết bị này và không thể hoàn tác nếu chưa sao lưu.");
+    if (!confirmed) return;
+
+    for (const key of backupKeys) window.localStorage.removeItem(key);
+    window.localStorage.setItem(FINHOME_EMPTY_MODE_KEY, "1");
+    notifyFinhomeDataChanged();
+    showNotice("success", "Đã xóa toàn bộ dữ liệu FinHome.");
+    window.setTimeout(() => {
+      const url = new URL(window.location.href);
+      url.searchParams.set("empty", "1");
+      window.location.href = url.toString();
+    }, 700);
+  };
+
+  return <Panel title="Dữ liệu & Sao lưu" sub="Xuất, khôi phục hoặc xóa dữ liệu FinHome đang lưu trên thiết bị này">
+    <div className="space-y-4 p-5">
+      {notice && <div className={cn("rounded-2xl px-4 py-3 text-sm font-semibold", notice.type === "success" ? "bg-[#ECFDF3] text-[#147A3D]" : "bg-[#FEF2F2] text-[#B22222]")}>{notice.text}</div>}
+      <div className="rounded-2xl bg-[#F9F6F1] p-4">
+        <p className="text-sm font-semibold text-[#111111]">Backup ver-1</p>
+        <p className="mt-1 text-xs leading-5 text-[#666666]">File backup chỉ gom các key FinHome đang có trong localStorage. Tải xuống không làm thay đổi dữ liệu hiện tại.</p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <button onClick={downloadBackup} className="flex items-center justify-center gap-2 rounded-2xl bg-[#111111] px-4 py-3.5 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(0,0,0,0.12)]"><Download className="size-4" />Tải dữ liệu xuống</button>
+        <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-2 rounded-2xl border border-black/[0.1] bg-white px-4 py-3.5 text-sm font-semibold text-[#111111]"><Upload className="size-4" />Nhập dữ liệu từ file</button>
+        <button onClick={clearAllData} className="flex items-center justify-center gap-2 rounded-2xl border border-[#B22222]/20 bg-[#FEF2F2] px-4 py-3.5 text-sm font-semibold text-[#B22222]"><Trash2 className="size-4" />Xóa toàn bộ dữ liệu</button>
+      </div>
+      <input ref={fileInputRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void restoreBackup(file); }} />
+      <div className="rounded-2xl border border-black/[0.07] bg-white p-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#A3A3A3]">Key đang sao lưu</p>
+        <p className="mt-2 break-words text-xs leading-5 text-[#666666]">{backupKeys.join(", ")}</p>
+      </div>
+    </div>
+  </Panel>;
 }
 
 function CategoryModalView({ modal, categories, activeType, onClose, onSave }: { modal: CategoryModal; categories: TransactionCategory[]; activeType: TransactionType; onClose: () => void; onSave: (category: TransactionCategory) => void }) {
@@ -122,6 +273,7 @@ export function SettingsPage() {
   const content: Record<Section, React.ReactNode> = {
     profile: <Panel title="Hồ sơ cá nhân"><div className="p-6"><div className="flex items-center gap-4"><div className="flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[#C93535] to-[#8B1A1A] text-xl font-semibold text-white shadow-[0_4px_12px_rgba(178,34,34,0.3)]">AD</div><div><p className="font-semibold text-[#111111]">Người dùng FinHome</p><p className="text-xs text-[#A3A3A3]">Cấu hình hồ sơ sẽ dùng cho đồng bộ cá nhân.</p></div></div></div></Panel>,
     categories: <CategoriesPanel />,
+    backup: <BackupPanel />,
     notifications: <Panel title="Thông báo" sub="Chọn những nội dung cần nhắc"><div>{Object.entries({ transactions: "Cảnh báo giao dịch", loans: "Nhắc hạn khoản vay", savings: "Mốc tiết kiệm", weekly: "Tổng kết tuần" }).map(([key, label]) => <Row key={key} label={label}><Toggle checked={notifs[key as keyof typeof notifs]} onChange={(value) => setNotifs((items) => ({ ...items, [key]: value }))} /></Row>)}</div></Panel>,
     security: <Panel title="Bảo mật"><Row label="Xác thực 2 lớp" sub="Bảo vệ dữ liệu tài chính"><Toggle checked={prefs.twoFactor} onChange={(value) => setPrefs((items) => ({ ...items, twoFactor: value }))} /></Row></Panel>,
     preferences: <Panel title="Tùy chọn"><Row label="Ngôn ngữ" sub="Giao diện tiếng Việt"><span className="text-xs font-semibold text-[#111111]">Tiếng Việt</span></Row><Row label="Chế độ tối" sub="Đang chuẩn bị"><Toggle checked={prefs.darkMode} onChange={(value) => setPrefs((items) => ({ ...items, darkMode: value }))} /></Row></Panel>,

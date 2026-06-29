@@ -4,7 +4,7 @@ import { Plus, ArrowRightLeft, Eye, EyeOff, Edit3, MoreHorizontal, Wallet, Build
 import { cn } from "./ui/utils";
 import { WorkspaceTimeFilter, createDefaultWorkspaceTimeRange, isDateInWorkspaceRange, type WorkspaceTimeRange } from "./WorkspaceTimeFilter";
 import { QuickDateField, todayISO } from "./QuickDateField";
-import { businessSpaces, creditCards, formatMoney, investmentCash, investmentHoldings, metrics, personalAccounts, personalTransactions, savingGoals, transactionCategories, loans, type CashflowTransaction, type InvestmentHolding, type TransactionCategory, type TransactionType, type Loan } from "../finhomeData";
+import { businessSpaces, creditCards, formatMoney, investmentCash, metrics, personalAccounts, personalTransactions, savingGoals, transactionCategories, loans, type CashflowTransaction, type InvestmentHolding, type TransactionCategory, type TransactionType, type Loan } from "../finhomeData";
 import { finhomeStorageKeys, isFinhomeEmptyMode, readStoredJson, readStoredNumber, writeStoredJson, writeStoredNumber } from "../finhomeStorage";
 
 const iconMap = { "Tiền mặt": Wallet, "Ngân hàng": Building, "Ví điện tử": Smartphone, "Ví khác": CreditCard } as const;
@@ -25,26 +25,30 @@ function accountTx(acc: Account, transactions: CashflowTransaction[]) {
   return transactions.filter(t => t.status !== "cancelled" && (t.source.includes(acc.name) || t.name.includes(acc.name))).slice(0, 12);
 }
 
-function AccountCard({ acc, hidden, onOpen }: { acc: Account; hidden: boolean; onOpen: () => void }) {
+function AccountCard({ acc, hidden, onOpen, onEdit }: { acc: Account; hidden: boolean; onOpen: () => void; onEdit: () => void }) {
   const Icon = iconMap[acc.type];
   return (
     <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: acc.status === "hidden" ? 0.58 : 1, y: 0 }} className="group relative">
-      <button onClick={onOpen} className="flex min-h-[82px] w-full items-center gap-3 rounded-2xl border border-[#EFEFEF] bg-white px-4 py-3 text-left shadow-[0_2px_8px_rgba(0,0,0,0.04)] transition hover:border-black/[0.12] hover:shadow-[0_8px_22px_rgba(0,0,0,0.07)]">
+      <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onOpen(); }} className="flex min-h-[82px] w-full cursor-pointer items-center gap-3 rounded-2xl border border-[#EFEFEF] bg-white px-4 py-3 text-left shadow-[0_2px_8px_rgba(0,0,0,0.04)] transition hover:border-black/[0.12] hover:shadow-[0_8px_22px_rgba(0,0,0,0.07)]">
         <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-[#F7F7F7]"><Icon className="size-5" style={{ color: acc.color }} strokeWidth={1.8} /></div>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-[#111111]">{acc.name}</p>
               <p className="mt-0.5 truncate text-xs text-[#A3A3A3]">{acc.type} · {acc.currency}</p>
+              {acc.note && <p className="mt-1 line-clamp-1 text-[11px] text-[#8A8A8A]">{acc.note}</p>}
             </div>
-            <p className="shrink-0 text-right text-base font-semibold tabular-nums text-[#111111]">{hidden ? "••••••••" : formatMoney(acc.balance)}</p>
+            <div className="flex shrink-0 items-start gap-2">
+              <p className="text-right text-base font-semibold tabular-nums text-[#111111]">{hidden ? "••••••••" : formatMoney(acc.balance)}</p>
+              <button type="button" title="Sửa ví" aria-label={`Sửa ${acc.name}`} onClick={(event) => { event.stopPropagation(); onEdit(); }} className="flex size-8 items-center justify-center rounded-xl text-[#A3A3A3] transition hover:bg-[#F5F5F5] hover:text-[#B22222]"><Edit3 className="size-4" /></button>
+            </div>
           </div>
           <div className="mt-2 flex items-center justify-between gap-3">
             <span className={cn("rounded-full px-2.5 py-1 text-[10px] font-semibold", acc.status === "hidden" ? "bg-[#F5F5F5] text-[#737373]" : "bg-[#DCFCE7] text-[#166534]")}>{acc.status === "hidden" ? "Đã ẩn" : "Đang sử dụng"}</span>
             <span className="flex items-center gap-1 text-[10px] font-medium text-[#A3A3A3]">Chi tiết <ChevronRight className="size-3.5" /></span>
           </div>
         </div>
-      </button>
+      </div>
     </motion.div>
   );
 }
@@ -70,10 +74,11 @@ function AccountEditForm({ acc, onClose, onUpdateAccount }: { acc: Account; onCl
   const [currency, setCurrency] = useState<Account["currency"]>(acc.currency);
   const [color, setColor] = useState(acc.color);
   const [status, setStatus] = useState<Account["status"]>(acc.status);
+  const [note, setNote] = useState(acc.note ?? "");
   const canSave = name.trim().length > 0;
   const save = () => {
     if (!canSave) return;
-    onUpdateAccount(acc.id, { name: name.trim(), type, currency, color, status });
+    onUpdateAccount(acc.id, { name: name.trim(), type, currency, color, status, note: note.trim() });
     onClose();
   };
   return <BaseModal title={`Sửa ${acc.name}`} sub="Không cho sửa trực tiếp số dư trong form này" onClose={onClose}><div className="space-y-4">
@@ -81,7 +86,7 @@ function AccountEditForm({ acc, onClose, onUpdateAccount }: { acc: Account; onCl
     <Field label="Loại ví"><CustomSelect title="Chọn loại ví" value={type} onChange={(next) => setType(next as Account["type"])} options={["Tiền mặt", "Ngân hàng", "Ví điện tử", "Ví khác"].map((item) => ({ value: item, label: item }))} /></Field>
     <div className="grid grid-cols-2 gap-3"><Field label="Đơn vị"><CustomSelect title="Chọn đơn vị" value={currency} onChange={(next) => setCurrency(next as Account["currency"])} options={[{ value: "VND", label: "VND" }]} /></Field><Field label="Màu nhận diện"><input className={inputClass} type="color" value={color} onChange={(event) => setColor(event.target.value)} /></Field></div>
     <Field label="Trạng thái"><CustomSelect title="Chọn trạng thái" value={status} onChange={(next) => setStatus(next as Account["status"])} options={[{ value: "active", label: "Đang sử dụng" }, { value: "hidden", label: "Đã ẩn" }, { value: "closed", label: "Đã đóng" }]} /></Field>
-    <Field label="Ghi chú"><textarea className={cn(inputClass, "min-h-[86px]")} placeholder="Ghi chú thêm nếu cần" /></Field>
+    <Field label="Ghi chú"><textarea className={cn(inputClass, "min-h-[86px]")} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi chú" /></Field>
     <div className="rounded-xl bg-[#F9F6F1] px-3 py-2 text-xs text-[#666666]">Số dư hiện tại: <b>{formatMoney(acc.balance)}</b>. Muốn thay đổi số dư hãy dùng “Điều chỉnh số dư”.</div>
     <div className="flex gap-2.5"><button onClick={onClose} className="flex-1 rounded-xl border border-black/[0.12] py-2.5 text-sm font-medium">Hủy</button><button disabled={!canSave} onClick={save} className={cn("flex-1 rounded-xl py-2.5 text-sm font-semibold text-white", canSave ? "bg-[#B22222]" : "bg-[#D4D4D4]")}>Lưu thông tin</button></div>
   </div></BaseModal>;
@@ -90,19 +95,21 @@ function AccountEditForm({ acc, onClose, onUpdateAccount }: { acc: Account; onCl
 
 function AccountAdjustForm({ acc, onClose, onAdjustBalance }: { acc: Account; onClose: () => void; onAdjustBalance: (account: Account, actual: number, note: string) => void }) {
   const [actual, setActual] = useState(String(acc.balance));
-  const [note, setNote] = useState("");
-  const actualValue = Number(actual) || 0;
-  const diff = actualValue - acc.balance;
+  const [note, setNote] = useState("");  const actualValue = Number.parseFloat(actual.replace(/[^0-9.-]/g, ""));
+  const safeActualValue = Number.isFinite(actualValue) ? actualValue : acc.balance;
+  const diff = safeActualValue - acc.balance;
+  const canSave = Number.isFinite(actualValue) && diff !== 0;
   const save = () => {
-    onAdjustBalance(acc, actualValue, note);
+    if (!canSave) return;
+    onAdjustBalance(acc, safeActualValue, note);
     onClose();
   };
   return <BaseModal title={`Điều chỉnh số dư ${acc.name}`} sub="Không tự động tính là thu nhập hoặc chi tiêu" onClose={onClose}><div className="space-y-4">
     <div className="rounded-xl bg-[#F9F6F1] px-4 py-3"><p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#666666]">Số dư hiện tại</p><p className="mt-1 text-xl font-semibold text-[#111111]">{formatMoney(acc.balance)}</p></div>
-    <Field label="Số dư thực tế mới"><input className={inputClass} type="number" value={actual} onChange={(event) => setActual(event.target.value)} /></Field>
+    <Field label="Số dư thực tế mới"><input className={inputClass} inputMode="decimal" value={actual} onChange={(event) => setActual(event.target.value)} /></Field>
     <div className="rounded-xl border border-dashed border-black/[0.12] px-4 py-3"><p className="text-xs text-[#666666]">Chênh lệch: <b className={diff >= 0 ? "text-[#166534]" : "text-[#B22222]"}>{formatMoney(diff)}</b>. Giao dịch điều chỉnh không tính vào thu nhập, chi tiêu hoặc chuyển tiền nội bộ.</p></div>
     <Field label="Ghi chú"><textarea className={cn(inputClass, "min-h-[76px]")} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ví dụ: đối soát lại số dư ngân hàng" /></Field>
-    <div className="flex gap-2.5"><button onClick={onClose} className="flex-1 rounded-xl border border-black/[0.12] py-2.5 text-sm font-medium">Hủy</button><button onClick={save} className="flex-1 rounded-xl bg-[#B22222] py-2.5 text-sm font-semibold text-white">Xác nhận điều chỉnh</button></div>
+    <div className="flex gap-2.5"><button onClick={onClose} className="flex-1 rounded-xl border border-black/[0.12] py-2.5 text-sm font-medium">Hủy</button><button onClick={save} disabled={!canSave} className={cn("flex-1 rounded-xl py-2.5 text-sm font-semibold text-white", canSave ? "bg-[#B22222]" : "bg-[#D4D4D4]")}>Xác nhận điều chỉnh</button></div>
   </div></BaseModal>;
 }
 
@@ -518,6 +525,8 @@ type EditableTransactionPatch = {
   source: string;
   amount: number;
   note: string;
+  categoryId?: string;
+  subcategoryId?: string;
 };
 
 function AddTransactionModal({ onClose, onAdd, accounts, cards }: { onClose: () => void; onAdd: (transaction: CashflowTransaction) => void; accounts: Account[]; cards: typeof creditCards }) {
@@ -741,9 +750,7 @@ function TransferModal({ onClose, accounts, onConfirm }: { onClose: () => void; 
   const targets: TransferTarget[] = [
     ...activeAccounts.map((account) => ({ id: `personal-${account.id}`, name: account.name, group: "Cá nhân" as const, balance: account.balance, icon: iconMap[account.type], color: account.color })),
     ...businessTargets,
-    { id: "investment-cash", name: "Tiền mặt đầu tư", group: "Đầu tư", balance: latestInvestmentCash, icon: ArrowUpRight, color: "#166534" },
-    { id: "investment-tcbs", name: "TCBS", group: "Đầu tư", balance: latestInvestmentCash, icon: Building, color: "#B22222" },
-    { id: "investment-crypto", name: "Crypto", group: "Đầu tư", icon: ArrowUpRight, color: "#111111" },
+    { id: "investment-cash", name: "Tiền đầu tư", group: "Đầu tư", balance: latestInvestmentCash, icon: ArrowUpRight, color: "#166534" },
     ...latestSavingGoals.filter((goal) => !["hidden", "closed", "paused"].includes(goal.status)).map((goal) => ({ id: `saving-${goal.id}`, name: goal.name, group: "Tiết kiệm" as const, balance: goal.current, icon: Wallet, color: "#0F766E" })),
   ];
   const [from, setFrom] = useState<TransferTarget | undefined>(targets.find((target) => target.group === "Cá nhân"));
@@ -869,7 +876,8 @@ function stringDetail(transaction: CashflowTransaction, key: string, fallback = 
 }
 
 function loadInvestmentHoldingsForPersonal() {
-  return readStoredJson<InvestmentHolding[]>(finhomeStorageKeys.investmentHoldings, investmentHoldings);
+  return readStoredJson<InvestmentHolding[]>(finhomeStorageKeys.investmentHoldings, [])
+    .filter((holding) => holding.id !== "fpt" && holding.id !== "btc");
 }
 
 function saveInvestmentHoldingsForPersonal(next: InvestmentHolding[]) {
@@ -895,7 +903,7 @@ function removeOneInvestmentEntry<T extends { date: string; quantity: number; pr
 }
 
 function isInvestmentTransferName(name?: string) {
-  return ["Tiền mặt đầu tư", "TCBS", "Crypto"].includes(name ?? "");
+  return ["Tiền đầu tư", "Tiền mặt đầu tư"].includes(name ?? "");
 }
 
 function applyInvestmentTransferSideEffect(transaction: CashflowTransaction, direction: 1 | -1) {
@@ -1045,7 +1053,7 @@ export function PersonalPage() {
     { id: "expenses" as const, label: "Chi tiêu", count: expenseItems.length },
     { id: "transfers" as const, label: "Chuyển tiền", count: transferItems.length },
     { id: "cards" as const, label: "Thẻ tín dụng", count: cards.length },
-    { id: "history" as const, label: "Lịch sử giao dịch", count: allTransactions.length },
+    { id: "history" as const, label: "Lịch sử giao dịch", count: periodTransactions.filter((tx) => tx.status !== "cancelled").length },
   ];
   const applyTransactionToAccounts = (transaction: CashflowTransaction, direction: 1 | -1) => {
     if (applyInvestmentTransactionSideEffect(transaction, direction, updateAccounts)) return;
@@ -1138,6 +1146,8 @@ export function PersonalPage() {
       source: patch.source,
       amount: Math.max(0, patch.amount),
       note: patch.note.trim(),
+      categoryId: patch.categoryId,
+      subcategoryId: patch.subcategoryId,
     };
     applyTransactionToAccounts(transaction, -1);
     setExtraTransactions((items) => items.map((item) => item.id === transaction.id ? updated : item));
@@ -1155,7 +1165,7 @@ export function PersonalPage() {
 
   return (
     <div className="min-h-full bg-[#F9F9F9]"><div className="px-6 lg:px-8 py-8 max-w-[1200px] mx-auto space-y-6">
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}><div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold text-[#A3A3A3] uppercase tracking-[0.1em] mb-1">Ví trung tâm</p><h1 className="text-[1.75rem] font-semibold text-[#111111] tracking-tight leading-none">Cá nhân</h1></div><div className="flex flex-wrap items-center justify-end gap-2"><WorkspaceTimeFilter onChange={setTimeRange} /><button onClick={() => setShowTransfer(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-black/[0.12] bg-white text-xs font-semibold text-[#111111] shadow-sm hover:bg-[#F9F6F1]"><ArrowRightLeft className="size-3.5 text-[#111111]" /> Chuyển tiền</button><button className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#B22222] text-xs font-semibold text-white" onClick={() => setShowTransaction(true)}><Plus className="size-3.5" /> Giao dịch</button></div></div></motion.div>
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}><div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold text-[#A3A3A3] uppercase tracking-[0.1em] mb-1">Ví trung tâm</p><h1 className="text-[1.75rem] font-semibold text-[#111111] tracking-tight leading-none">Cá nhân</h1></div><div className="flex flex-wrap items-center justify-end gap-2"><WorkspaceTimeFilter value={timeRange} onChange={setTimeRange} /><button onClick={() => setShowTransfer(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-black/[0.12] bg-white text-xs font-semibold text-[#111111] shadow-sm hover:bg-[#F9F6F1]"><ArrowRightLeft className="size-3.5 text-[#111111]" /> Chuyển tiền</button><button className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#B22222] text-xs font-semibold text-white" onClick={() => setShowTransaction(true)}><Plus className="size-3.5" /> Giao dịch</button></div></div></motion.div>
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,0.42fr)_minmax(0,0.58fr)]">
         <div className="rounded-[28px] border border-black/[0.07] bg-[#111111] p-6 text-white shadow-[0_18px_45px_rgba(0,0,0,0.10)]">
           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/55">Tổng số dư cá nhân</p>
@@ -1185,7 +1195,7 @@ export function PersonalPage() {
             </div>
           </div>
           <div className="grid grid-cols-1 gap-3">
-            {visibleAccounts.map(acc => <AccountCard key={acc.id} acc={acc} hidden={hidden.has(acc.id)} onOpen={() => openAccount(acc, "detail")} />)}
+            {visibleAccounts.map(acc => <AccountCard key={acc.id} acc={acc} hidden={hidden.has(acc.id)} onOpen={() => openAccount(acc, "detail")} onEdit={() => openAccount(acc, "edit")} />)}
           </div>
           {!visibleAccounts.length && <div className="rounded-2xl border border-dashed border-black/[0.12] bg-white px-4 py-8 text-center text-sm text-[#666666]">Không tìm thấy ví phù hợp.</div>}
         </motion.div>}
@@ -1196,7 +1206,7 @@ export function PersonalPage() {
         {tab === "history" && <PersonalTransactionHistory items={periodTransactions} onAction={setActionTarget} />}
       </AnimatePresence>
     </div><AnimatePresence>{showTransfer && <TransferModal onClose={() => setShowTransfer(false)} accounts={accounts} onConfirm={addTransaction} />}
-      {showCardPayment && <CreditCardPaymentModal onClose={() => setShowCardPayment(false)} accounts={accounts} cards={cards} onPay={payCreditCard} />}{showTransaction && <AddTransactionModal onClose={() => setShowTransaction(false)} onAdd={addTransaction} accounts={accounts} cards={cards} />}{actionTarget && <TransactionActionModal transaction={actionTarget} canEdit={isEditableTransaction(actionTarget)} onClose={() => setActionTarget(null)} onEdit={() => { setEditTarget(actionTarget); setActionTarget(null); }} onCancel={() => { setDeleteTarget(actionTarget); setActionTarget(null); }} />}{editTarget && <EditTransactionModal transaction={editTarget} accounts={accounts} cards={cards} onClose={() => setEditTarget(null)} onSave={(patch) => updateTransaction(editTarget, patch)} />}{deleteTarget && <DeleteTransactionModal transaction={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => cancelTransaction(deleteTarget)} />}{showAddAccount && <AddAccountModal onClose={() => setShowAddAccount(false)} onAdd={(account) => setAccounts((items) => [...items, account])} />}{selectedAccount && accountModal && <AccountModalView modal={accountModal} acc={selectedAccount} transactions={periodTransactions} onClose={() => setAccountModal(null)} onSwitch={setAccountModal} onAddTransaction={() => { setAccountModal(null); setShowTransaction(true); }} onTransfer={() => { setAccountModal(null); setShowTransfer(true); }} onToggleHidden={() => { toggle(selectedAccount.id); setAccountModal(null); }} onUpdateAccount={updateAccount} onAdjustBalance={adjustAccountBalance} />}</AnimatePresence></div>
+      {showCardPayment && <CreditCardPaymentModal onClose={() => setShowCardPayment(false)} accounts={accounts} cards={cards} onPay={payCreditCard} />}{showTransaction && <AddTransactionModal onClose={() => setShowTransaction(false)} onAdd={addTransaction} accounts={accounts} cards={cards} />}{actionTarget && <TransactionActionModal transaction={actionTarget} canEdit={isEditableTransaction(actionTarget)} onClose={() => setActionTarget(null)} onEdit={() => { setEditTarget(actionTarget); setActionTarget(null); }} onCancel={() => { setDeleteTarget(actionTarget); setActionTarget(null); }} />}{editTarget && <EditTransactionModal transaction={editTarget} accounts={accounts} cards={cards} onClose={() => setEditTarget(null)} onSave={(patch) => updateTransaction(editTarget, patch)} />}{deleteTarget && <DeleteTransactionModal transaction={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => cancelTransaction(deleteTarget)} />}{showAddAccount && <AddAccountModal onClose={() => setShowAddAccount(false)} onAdd={(account) => setAccounts((items) => [...items, account])} />}{selectedAccount && accountModal && <AccountModalView key={`${selectedAccount.id}-${accountModal}`} modal={accountModal} acc={selectedAccount} transactions={periodTransactions} onClose={() => setAccountModal(null)} onSwitch={setAccountModal} onAddTransaction={() => { setAccountModal(null); setShowTransaction(true); }} onTransfer={() => { setAccountModal(null); setShowTransfer(true); }} onToggleHidden={() => { toggle(selectedAccount.id); setAccountModal(null); }} onUpdateAccount={updateAccount} onAdjustBalance={adjustAccountBalance} />}</AnimatePresence></div>
   );
 }
 
@@ -1221,31 +1231,52 @@ function TransactionActionModal({ transaction, canEdit, onClose, onEdit, onCance
 function EditTransactionModal({ transaction, accounts, cards, onClose, onSave }: { transaction: CashflowTransaction; accounts: Account[]; cards: typeof creditCards; onClose: () => void; onSave: (patch: EditableTransactionPatch) => void }) {
   const activeAccounts = accounts.filter((account) => account.status !== "hidden");
   const isExpense = transaction.countsAsExpense || transaction.kind === "credit_card_spend";
+  const transactionTypeLabel: TransactionType = isExpense ? "Chi tiêu" : "Thu nhập";
   const walletOptions: SelectOption[] = activeAccounts.map((account) => {
     const Icon = iconMap[account.type];
     return { value: account.name, label: account.name, sub: "Cá nhân · " + formatMoney(account.balance), icon: <Icon className="size-4" style={{ color: account.color }} /> };
   });
   const creditCardOptions: SelectOption[] = cards.filter((card) => card.status === "active").map((card) => ({ value: card.name, label: card.name, sub: "Thẻ tín dụng · dư nợ " + formatMoney(card.used), icon: <CreditCard className="size-4" style={{ color: card.color }} /> }));
   const accountOptions = isExpense ? [...walletOptions, ...creditCardOptions] : walletOptions;
-  const [name, setName] = useState(transaction.name);
+  const categoriesOfType = transactionCategories.filter((category) => category.transactionType === transactionTypeLabel && category.status !== "hidden");
+  const findInitialCategory = () => {
+    const byId = categoriesOfType.find((category) => category.id === transaction.subcategoryId || category.id === transaction.categoryId);
+    const byName = categoriesOfType.find((category) => category.name.trim().toLowerCase() === transaction.name.trim().toLowerCase());
+    const matched = byId ?? byName;
+    if (!matched) return { parentId: "", childId: "" };
+    if (matched.parentCategoryId) return { parentId: matched.parentCategoryId, childId: matched.id };
+    return { parentId: matched.id, childId: "" };
+  };
+  const initialCategory = findInitialCategory();
   const [date, setDate] = useState(transaction.date);
   const [source, setSource] = useState(transaction.source);
   const [amount, setAmount] = useState(String(Math.abs(transaction.amount)));
   const [note, setNote] = useState(transaction.note || "");
+  const [parentCategoryId, setParentCategoryId] = useState(initialCategory.parentId);
+  const [subcategoryId, setSubcategoryId] = useState(initialCategory.childId);
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
   const amountValue = Math.max(0, Number(amount) || 0);
+  const selectedParent = transactionCategories.find((category) => category.id === parentCategoryId && category.transactionType === transactionTypeLabel);
+  const selectedChild = transactionCategories.find((category) => category.id === subcategoryId && category.parentCategoryId === parentCategoryId);
+  const selectedName = selectedChild?.name ?? selectedParent?.name ?? "";
+  const canSave = amountValue > 0 && Boolean(selectedParent);
 
-  return <BaseModal title="Sửa giao dịch" sub="Cập nhật lại giao dịch đã nhập sai" onClose={onClose}>
+  return <BaseModal title="Sửa giao dịch" sub="Cập nhật danh mục, tài khoản, số tiền hoặc ghi chú" onClose={onClose}>
     <div className="space-y-3.5">
       <QuickDateField label="Ngày giao dịch" value={date} onChange={setDate} variant="chip" />
-      <Field label="Tên giao dịch"><input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} placeholder="Tên giao dịch" /></Field>
+      <Field label="Danh mục">
+        <CategorySelectButton parent={selectedParent} child={selectedChild} onClick={() => setCategoryPickerOpen(true)} />
+      </Field>
+      {!selectedParent && <div className="rounded-2xl bg-[#FEF2F2] px-4 py-3 text-xs leading-relaxed text-[#B22222]">Giao dịch cũ chưa map được danh mục. Vui lòng chọn danh mục trước khi lưu.</div>}
       <Field label="Tài khoản / Nguồn tiền"><CustomSelect title="Chọn tài khoản" value={source} options={accountOptions} onChange={setSource} /></Field>
       <Field label="Số tiền"><input className={inputClass} type="number" min="0" value={amount} onChange={(event) => setAmount(event.target.value)} /></Field>
       <Field label="Ghi chú"><textarea className={cn(inputClass, "min-h-[72px] resize-none")} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi chú" /></Field>
-      <div className="rounded-2xl bg-[#F9F6F1] px-4 py-3 text-xs leading-relaxed text-[#666666]">Khi lưu, FinHome sẽ đảo số dư theo giao dịch cũ rồi áp dụng lại giao dịch mới để tránh lệch ví/thẻ.</div>
+      <div className="rounded-2xl bg-[#F9F6F1] px-4 py-3 text-xs leading-relaxed text-[#666666]">Danh mục lấy từ Cài đặt. Sửa danh mục không làm đổi số dư; nếu sửa số tiền FinHome sẽ đảo giao dịch cũ rồi áp dụng giao dịch mới.</div>
       <div className="flex gap-2.5 pt-1">
         <button onClick={onClose} className="flex-1 rounded-xl border border-black/[0.12] bg-white py-3 text-sm font-semibold text-[#111111]">Hủy</button>
-        <button onClick={() => onSave({ name, date, source, amount: amountValue, note })} disabled={amountValue <= 0} className={cn("flex-1 rounded-xl py-3 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(178,34,34,0.22)]", amountValue <= 0 ? "bg-[#D4D4D4]" : "bg-[#B22222]")}>Lưu thay đổi</button>
+        <button onClick={() => onSave({ name: selectedName, date, source, amount: amountValue, note, categoryId: parentCategoryId || undefined, subcategoryId: subcategoryId || undefined })} disabled={!canSave} className={cn("flex-1 rounded-xl py-3 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(178,34,34,0.22)]", !canSave ? "bg-[#D4D4D4]" : "bg-[#B22222]")}>Lưu thay đổi</button>
       </div>
+      <AnimatePresence>{categoryPickerOpen && <CategorySelectorSheet transactionType={transactionTypeLabel} parentId={parentCategoryId} subcategoryId={subcategoryId} onSelect={(nextParentId, nextSubcategoryId) => { setParentCategoryId(nextParentId); setSubcategoryId(nextSubcategoryId); }} onClose={() => setCategoryPickerOpen(false)} />}</AnimatePresence>
     </div>
   </BaseModal>;
 }
@@ -1265,7 +1296,8 @@ function List({ title, total, items, mode, onAction }: { title: string; total: s
 }
 
 function PersonalTransactionHistory({ items, onAction }: { items: CashflowTransaction[]; onAction: (transaction: CashflowTransaction) => void }) {
-  const sortedItems = [...items].sort((a, b) => b.date.localeCompare(a.date));
+  type HistoryFilter = "income" | "expense" | "transfer" | "cancelled";
+  const [filter, setFilter] = useState<HistoryFilter | null>(null);
   const formatDate = (value: string) => {
     const [year, month, day] = value.split("-");
     return year && month && day ? `${day}/${month}/${year}` : value;
@@ -1277,16 +1309,52 @@ function PersonalTransactionHistory({ items, onAction }: { items: CashflowTransa
     if (item.countsAsExpense || item.kind === "credit_card_spend" || (item.kind === "adjustment" && item.amount < 0)) return "expense";
     return "neutral";
   };
+  const isTransferLike = (item: CashflowTransaction) => ["transfer", "loan_disbursement", "loan_principal", "credit_card_payment"].includes(item.kind);
+  const activeItems = items.filter((item) => item.status !== "cancelled");
+  const filterOptions: { id: HistoryFilter; label: string; count: number }[] = [
+    { id: "income", label: "Thu", count: activeItems.filter((item) => toneOf(item) === "income").length },
+    { id: "expense", label: "Chi", count: activeItems.filter((item) => toneOf(item) === "expense").length },
+    { id: "transfer", label: "Chuyển tiền", count: activeItems.filter(isTransferLike).length },
+    { id: "cancelled", label: "Đã hủy", count: items.filter((item) => item.status === "cancelled").length },
+  ];
+  const filteredItems = items
+    .filter((item) => {
+      if (filter === "cancelled") return item.status === "cancelled";
+      if (item.status === "cancelled") return false;
+      if (filter === "income") return toneOf(item) === "income";
+      if (filter === "expense") return toneOf(item) === "expense";
+      if (filter === "transfer") return isTransferLike(item);
+      return true;
+    })
+    .sort((a, b) => b.date.localeCompare(a.date));
 
   return <motion.div key="history" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="overflow-hidden rounded-2xl border border-black/[0.07] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.05)]">
-    <div className="flex items-center justify-between gap-4 border-b border-black/[0.05] px-5 py-4 sm:px-6">
+    <div className="flex flex-col gap-4 border-b border-black/[0.05] px-5 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
       <div>
         <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#A3A3A3]">Cá nhân</p>
         <p className="text-base font-semibold text-[#111111]">Lịch sử giao dịch</p>
+        <p className="mt-1 text-xs text-[#777777]">Mặc định hiển thị tất cả giao dịch còn hiệu lực. Giao dịch đã hủy nằm riêng trong bộ lọc Đã hủy.</p>
       </div>
-      <span className="rounded-full bg-[#F5F5F5] px-3 py-1 text-xs font-semibold text-[#666666]">{sortedItems.length} giao dịch</span>
+      <span className="w-fit rounded-full bg-[#F5F5F5] px-3 py-1 text-xs font-semibold text-[#666666]">{filteredItems.length} giao dịch</span>
     </div>
-    {sortedItems.length ? <div className="divide-y divide-black/[0.04]">{sortedItems.map((item) => {
+    <div className="flex gap-2 overflow-x-auto border-b border-black/[0.05] px-5 py-3 sm:px-6">
+      {filterOptions.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          onClick={() => setFilter(filter === option.id ? null : option.id)}
+          className={cn(
+            "shrink-0 rounded-full border px-3.5 py-2 text-xs font-semibold transition",
+            filter === option.id
+              ? "border-[#B22222] bg-[#FDECEC] text-[#B22222]"
+              : "border-black/[0.08] bg-white text-[#666666] hover:bg-[#F7F7F7]"
+          )}
+        >
+          {option.label}<span className="ml-1.5 text-[10px] opacity-70">{option.count}</span>
+        </button>
+      ))}
+    </div>
+    {filteredItems.length ? <div className="divide-y divide-black/[0.04]">{filteredItems.map((item) => {
       const tone = toneOf(item);
       const isIncome = tone === "income";
       const isExpense = tone === "expense";
@@ -1305,68 +1373,7 @@ function PersonalTransactionHistory({ items, onAction }: { items: CashflowTransa
         <p className={cn("shrink-0 text-sm font-semibold tabular-nums", isIncome ? "text-[#166534]" : isExpense ? "text-[#B22222]" : "text-[#111111]", tone === "cancelled" && "line-through text-[#737373]")}>{isIncome ? "+" : isExpense && item.amount >= 0 ? "-" : ""}{formatMoney(Math.abs(item.amount))}</p>
         {tone !== "cancelled" && <button title="Thao tác giao dịch" aria-label="Thao tác giao dịch" onClick={() => onAction(item)} className="flex size-9 shrink-0 items-center justify-center rounded-xl text-[#A3A3A3] transition-colors hover:bg-[#F5F5F5] hover:text-[#111111]"><MoreHorizontal className="size-4" /></button>}
       </div>;
-    })}</div> : <div className="px-6 py-12 text-center"><FileText className="mx-auto size-8 text-[#D4D4D4]" /><p className="mt-3 text-sm font-semibold text-[#111111]">Chưa có giao dịch Cá nhân</p><p className="mt-1 text-xs text-[#A3A3A3]">Các giao dịch thu, chi và chuyển tiền sẽ xuất hiện tại đây.</p></div>}
+    })}</div> : <div className="px-6 py-12 text-center"><FileText className="mx-auto size-8 text-[#D4D4D4]" /><p className="mt-3 text-sm font-semibold text-[#111111]">Không có giao dịch phù hợp</p><p className="mt-1 text-xs text-[#A3A3A3]">Hãy đổi bộ lọc hoặc tạo giao dịch mới.</p></div>}
   </motion.div>;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

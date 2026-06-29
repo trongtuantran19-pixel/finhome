@@ -14,7 +14,7 @@ const LOANS_STORAGE_KEY = finhomeStorageKeys.loans;
 
 type DebtGroupFilter = "all" | "loan" | "credit";
 type LoanTypeFilter = "all" | LoanKind;
-type LoanModal = { type: "add" } | { type: "detail"; loanId: string } | { type: "edit"; loanId: string } | { type: "adjust"; loanId: string } | { type: "pay"; loanId: string } | { type: "disburse"; loanId: string } | { type: "cardDetail"; cardId: string } | { type: "cardEdit"; cardId: string } | { type: "cardAdjust"; cardId: string } | { type: "cardPay"; cardId: string } | { type: "txEdit"; transactionId: string } | null;
+type LoanModal = { type: "add" } | { type: "addCard" } | { type: "detail"; loanId: string } | { type: "edit"; loanId: string } | { type: "adjust"; loanId: string } | { type: "pay"; loanId: string } | { type: "disburse"; loanId: string } | { type: "cardDetail"; cardId: string } | { type: "cardEdit"; cardId: string } | { type: "cardAdjust"; cardId: string } | { type: "cardPay"; cardId: string } | { type: "txEdit"; transactionId: string } | null;
 type LoanKind = Exclude<Loan["type"], "Thẻ tín dụng">;
 
 const debtGroupFilters: { id: DebtGroupFilter; label: string }[] = [
@@ -26,15 +26,23 @@ const debtGroupFilters: { id: DebtGroupFilter; label: string }[] = [
 const loanTypeOptions: { value: LoanTypeFilter; label: string }[] = [
   { value: "all", label: "Tất cả loại vay" },
   { value: "Vay ngân hàng", label: "Vay ngân hàng" },
-  { value: "Vay mua nhà", label: "Vay mua nhà" },
-  { value: "Vay mua xe", label: "Vay mua xe" },
-  { value: "Vay kinh doanh", label: "Vay kinh doanh" },
-  { value: "Vay bạn bè/người thân", label: "Vay bạn bè/người thân" },
-  { value: "Vay công ty", label: "Vay công ty" },
-  { value: "Vay tiêu dùng", label: "Vay tiêu dùng" },
   { value: "Vay cá nhân", label: "Vay cá nhân" },
-  { value: "Khoản vay khác", label: "Khác" },
 ];
+
+function normalizeLoanType(type: Loan["type"]): LoanKind {
+  return type === "Vay cá nhân" || type === "Vay bạn bè/người thân" ? "Vay cá nhân" : "Vay ngân hàng";
+}
+
+function normalizeLoanRecord(loan: Loan): Loan {
+  const outstanding = Math.max(0, loan.outstanding ?? 0);
+  const shouldReopen = outstanding > 0 && (loan.status === "settled" || loan.status === "closed");
+  return {
+    ...loan,
+    type: normalizeLoanType(loan.type),
+    outstanding,
+    status: outstanding === 0 ? "settled" : shouldReopen ? "active" : loan.status,
+  };
+}
 
 
 const loanStatusOptions: { value: Loan["status"]; label: string; sub: string }[] = [
@@ -52,7 +60,11 @@ const cardStatusOptions: { value: CreditCardDebt["status"]; label: string; sub: 
 ];
 
 function loanHasTransactions(loan: Loan, transactions: CashflowTransaction[]) {
-  return loan.history.length > 0 || transactions.some((tx) => tx.id.includes(loan.id) || tx.source.includes(loan.name) || tx.note.includes(loan.name));
+  return loan.history.length > 0 || transactions.some((tx) => {
+    const source = tx.source ?? "";
+    const note = tx.note ?? "";
+    return tx.id.includes(loan.id) || source.includes(loan.name) || note.includes(loan.name);
+  });
 }
 
 function statusLabel(status: Loan["status"] | CreditCardDebt["status"]) {
@@ -62,14 +74,7 @@ function statusLabel(status: Loan["status"] | CreditCardDebt["status"]) {
 
 const icons: Record<string, typeof Building> = {
   "Vay ngân hàng": Building,
-  "Vay mua nhà": Building,
-  "Vay mua xe": Building,
-  "Vay kinh doanh": Briefcase,
-  "Vay bạn bè/người thân": User,
-  "Vay công ty": Briefcase,
-  "Vay tiêu dùng": User,
   "Vay cá nhân": User,
-  "Khoản vay khác": Building,
   "Thẻ tín dụng": CreditCard,
 };
 
@@ -81,6 +86,12 @@ function loadStoredAccounts() {
   return readStoredJson<PersonalAccount[]>(PERSONAL_ACCOUNTS_STORAGE_KEY, personalAccounts);
 }
 
+function selectablePersonalAccounts() {
+  const storedAccounts = loadStoredAccounts().filter((account) => !["hidden", "closed", "settled", "cancelled"].includes(String(account.status)));
+  if (storedAccounts.length) return storedAccounts;
+  return personalAccounts.filter((account) => account.status !== "hidden");
+}
+
 function saveStoredAccounts(next: PersonalAccount[]) {
   writeStoredJson(PERSONAL_ACCOUNTS_STORAGE_KEY, next);
 }
@@ -90,7 +101,7 @@ function saveStoredCards(next: CreditCardDebt[]) {
 }
 
 function loadStoredLoans() {
-  return readStoredJson<Loan[]>(LOANS_STORAGE_KEY, loans);
+  return readStoredJson<Loan[]>(LOANS_STORAGE_KEY, loans).map(normalizeLoanRecord);
 }
 
 function saveStoredLoans(next: Loan[]) {
@@ -201,18 +212,37 @@ function CustomSelect({ title, value, options, onChange, placeholder = "Chọn" 
 
 const textareaClass = "min-h-24 w-full rounded-2xl border border-black/[0.08] bg-white px-4 py-3 text-sm font-semibold text-[#111111] outline-none transition focus:border-[#B22222] focus:shadow-[0_0_0_4px_rgba(178,34,34,0.08)]";
 
+function LoanTypeSegmented({ value, onChange }: { value: LoanKind; onChange: (value: LoanKind) => void }) {
+  const options: { value: LoanKind; label: string; sub: string; icon: typeof Building }[] = [
+    { value: "Vay ngân hàng", label: "Vay ngân hàng", sub: "Ngân hàng, công ty tài chính, tổ chức cho vay", icon: Building },
+    { value: "Vay cá nhân", label: "Vay cá nhân", sub: "Người thân, bạn bè hoặc cá nhân khác", icon: User },
+  ];
+  return <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+    {options.map((option) => {
+      const Icon = option.icon;
+      const active = value === option.value;
+      return <button key={option.value} type="button" onClick={() => onChange(option.value)} className={cn("flex items-start gap-3 rounded-2xl border p-4 text-left transition", active ? "border-[#B22222] bg-[#FDECEC] text-[#B22222] shadow-[0_0_0_4px_rgba(178,34,34,0.06)]" : "border-black/[0.08] bg-white text-[#111111] hover:bg-[#F9F9F9]")}>
+        <span className={cn("flex size-10 shrink-0 items-center justify-center rounded-xl", active ? "bg-white text-[#B22222]" : "bg-[#F5F5F5] text-[#666666]")}><Icon className="size-4" /></span>
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold">{option.label}</span>
+          <span className={cn("mt-1 block text-xs leading-relaxed", active ? "text-[#B22222]/70" : "text-[#A3A3A3]")}>{option.sub}</span>
+        </span>
+      </button>;
+    })}
+  </div>;
+}
+
 function AddLoanModal({ onClose, onAdd }: { onClose: () => void; onAdd: (loan: Loan, accountId: string, disburse: boolean, date: string) => void }) {
-  const accounts = useMemo(() => loadStoredAccounts().filter((account) => account.status === "active"), []);
+  const accounts = useMemo(() => selectablePersonalAccounts(), []);
   const [name, setName] = useState("Vay mới");
   const [type, setType] = useState<LoanKind>("Vay ngân hàng");
+  const [lender, setLender] = useState("");
   const [original, setOriginal] = useState("0");
   const [outstanding, setOutstanding] = useState("0");
   const [rate, setRate] = useState("0");
-  const [monthly, setMonthly] = useState("0");
   const [loanDate, setLoanDate] = useState(todayISO());
   const [nextDue, setNextDue] = useState(todayISO());
   const [receiveAccountId, setReceiveAccountId] = useState(accounts[0]?.id ?? "");
-  const [payAccountId, setPayAccountId] = useState(accounts[0]?.id ?? "");
   const [disburse, setDisburse] = useState(true);
   const [note, setNote] = useState("");
   const principal = parseMoney(original);
@@ -230,12 +260,14 @@ function AddLoanModal({ onClose, onAdd }: { onClose: () => void; onAdd: (loan: L
       original: principal,
       outstanding: currentDebt,
       rate: Number(rate) || 0,
-      monthly: parseMoney(monthly),
+      monthly: 0,
       nextDue,
-      bank: receiveAccount?.name ?? "Chưa chọn",
+      bank: lender.trim() || receiveAccount?.name || "Chưa chọn",
       status: currentDebt <= 0 ? "settled" : "active",
       paidInterest: 0,
       history: [],
+      startDate: loanDate,
+      note: note.trim(),
     };
     onAdd(loan, receiveAccountId, disburse, loanDate);
     onClose();
@@ -243,36 +275,33 @@ function AddLoanModal({ onClose, onAdd }: { onClose: () => void; onAdd: (loan: L
 
   return <ModalShell title="Thêm khoản vay" subtitle="Ghi nhận nghĩa vụ nợ, không tính là thu nhập" onClose={onClose}>
     <form onSubmit={submit} className="space-y-4">
-      <Field label="Tên khoản vay"><input value={name} onChange={(event) => setName(event.target.value)} className={inputClass} placeholder="Ví dụ: Vay mua xe" /></Field>
+      <Field label="Tên khoản vay"><input value={name} onChange={(event) => setName(event.target.value)} className={inputClass} placeholder="Ví dụ: Vay ngân hàng VCB" /></Field>
+      <Field label="Loại khoản vay"><LoanTypeSegmented value={type} onChange={setType} /></Field>
+      <Field label="Ngân hàng / Tổ chức cho vay / Người cho vay"><input value={lender} onChange={(event) => setLender(event.target.value)} className={inputClass} placeholder={type === "Vay ngân hàng" ? "Ví dụ: VCB" : "Ví dụ: Anh A"} /></Field>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field label="Loại khoản vay"><CustomSelect title="Chọn loại khoản vay" value={type} onChange={(next) => setType(next as LoanKind)} options={loanTypeOptions.filter((item) => item.value !== "all").map((item) => ({ value: item.value, label: item.label }))} /></Field>
         <Field label="Lãi suất %/năm"><input value={rate} onChange={(event) => setRate(event.target.value)} inputMode="decimal" className={inputClass} /></Field>
+        <Field label="Tài khoản nhận giải ngân"><CustomSelect title="Chọn tài khoản nhận giải ngân" value={receiveAccountId} onChange={setReceiveAccountId} placeholder="Chọn tài khoản" options={accounts.map((account) => ({ value: account.id, label: account.name, sub: `Cá nhân · ${formatMoney(account.balance)}` }))} /></Field>
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field label="Số tiền vay ban đầu"><input value={original} onChange={(event) => { setOriginal(event.target.value); if (outstanding === "0") setOutstanding(event.target.value); }} inputMode="numeric" className={inputClass} /></Field>
-        <Field label="Dư nợ hiện tại"><input value={outstanding} onChange={(event) => setOutstanding(event.target.value)} inputMode="numeric" className={inputClass} /></Field>
+        <Field label="Số tiền vay"><input value={original} onChange={(event) => { setOriginal(event.target.value); if (outstanding === "0") setOutstanding(event.target.value); }} inputMode="numeric" className={inputClass} /></Field>
+        <Field label="Dư nợ ban đầu"><input value={outstanding} onChange={(event) => setOutstanding(event.target.value)} inputMode="numeric" className={inputClass} /></Field>
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <QuickDateField label="Ngày vay" value={loanDate} onChange={setLoanDate} />
-        <QuickDateField label="Ngày đến hạn" value={nextDue} onChange={setNextDue} />
+        <QuickDateField label="Ngày giải ngân" value={loanDate} onChange={setLoanDate} />
+        <QuickDateField label="Ngày đáo hạn" value={nextDue} onChange={setNextDue} />
       </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field label="Trả mỗi kỳ"><input value={monthly} onChange={(event) => setMonthly(event.target.value)} inputMode="numeric" className={inputClass} /></Field>
-        <Field label="Tài khoản trả nợ"><CustomSelect title="Chọn tài khoản trả nợ" value={payAccountId} onChange={setPayAccountId} options={accounts.map((account) => ({ value: account.id, label: account.name, sub: `Cá nhân · ${formatMoney(account.balance)}` }))} /></Field>
-      </div>
-      <Field label="Tài khoản nhận giải ngân"><CustomSelect title="Chọn tài khoản nhận giải ngân" value={receiveAccountId} onChange={setReceiveAccountId} options={accounts.map((account) => ({ value: account.id, label: account.name, sub: `Cá nhân · ${formatMoney(account.balance)}` }))} /></Field>
       <button type="button" onClick={() => setDisburse((value) => !value)} className={cn("flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm font-semibold", disburse ? "border-[#B22222]/25 bg-[#FDECEC] text-[#B22222]" : "border-black/[0.08] bg-white text-[#737373]")}>
         <span>Ghi nhận giải ngân vào tài khoản cá nhân</span><span>{disburse ? "Có" : "Không"}</span>
       </button>
       <Field label="Ghi chú"><textarea value={note} onChange={(event) => setNote(event.target.value)} className={textareaClass} placeholder="Ghi chú thêm nếu cần" /></Field>
-      <div className="rounded-2xl bg-[#F8F5F0] px-4 py-3 text-sm text-[#666666]">Giải ngân vay làm tăng tài khoản nhận và tăng dư nợ cùng lúc, không ghi nhận là thu nhập và không làm tăng tài sản ròng.</div>
+      <div className="rounded-2xl bg-[#F8F5F0] px-4 py-3 text-sm text-[#666666]">Khi lưu, khoản vay làm tăng dư nợ. Nếu ghi nhận giải ngân, tài khoản nhận tiền tăng cùng lúc nhưng không tính là thu nhập.</div>
       <div className="grid grid-cols-2 gap-3 pt-1"><button type="button" onClick={onClose} className="h-13 rounded-2xl border border-black/[0.08] bg-white text-sm font-semibold text-[#111111]">Hủy</button><button type="submit" disabled={!canSave} className="h-13 rounded-2xl bg-[#B22222] text-sm font-semibold text-white shadow-lg shadow-[#B22222]/20 disabled:bg-[#D4D4D4] disabled:shadow-none">Lưu khoản vay</button></div>
     </form>
   </ModalShell>;
 }
 
 function DisburseLoanModal({ loan, onClose, onDisburse }: { loan: Loan; onClose: () => void; onDisburse: (loanId: string, amount: number, accountId: string, date: string) => void }) {
-  const accounts = useMemo(() => loadStoredAccounts().filter((account) => account.status === "active"), []);
+  const accounts = useMemo(() => selectablePersonalAccounts(), []);
   const [amount, setAmount] = useState("0");
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
   const [date, setDate] = useState(todayISO());
@@ -302,7 +331,7 @@ function DisburseLoanModal({ loan, onClose, onDisburse }: { loan: Loan; onClose:
   </ModalShell>;
 }
 function PayLoanModal({ loan, onClose, onPay }: { loan: Loan; onClose: () => void; onPay: (loanId: string, principal: number, interest: number, accountId: string, date: string) => void }) {
-  const accounts = useMemo(() => loadStoredAccounts().filter((account) => account.status === "active"), []);
+  const accounts = useMemo(() => selectablePersonalAccounts(), []);
   const [principal, setPrincipal] = useState("0");
   const [interest, setInterest] = useState("0");
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
@@ -338,7 +367,7 @@ function PayLoanModal({ loan, onClose, onPay }: { loan: Loan; onClose: () => voi
 }
 
 function CreditCardPaymentModal({ card, onClose, onPay }: { card: typeof creditCards[number]; onClose: () => void; onPay: (cardId: string, accountId: string, principal: number, fee: number, date: string) => void }) {
-  const accounts = useMemo(() => loadStoredAccounts().filter((account) => account.status === "active"), []);
+  const accounts = useMemo(() => selectablePersonalAccounts(), []);
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
   const [principal, setPrincipal] = useState("0");
   const [fee, setFee] = useState("0");
@@ -389,7 +418,7 @@ function LoanDetailModal({ loan, onClose, onPay, onDisburse, onEdit, onAdjust, o
         <p className="mt-2 text-sm text-white/45">{loan.bank} · {loan.rate}%/năm · {statusLabel(loan.status)}</p>
       </div>
       <div className="grid grid-cols-2 gap-3">
-        {[["Số vay ban đầu", formatMoney(loan.original)], ["Đã trả gốc", formatMoney(paidPrincipal)], ["Đã trả lãi/phí", formatMoney(loan.paidInterest)], ["Trả mỗi kỳ", formatMoney(loan.monthly)], ["Ngày vay", loan.startDate ? shortDate(loan.startDate) : "Chưa lưu"], ["Đến hạn", shortDate(loan.nextDue)]].map(([label, value]) => <div key={label} className="rounded-2xl bg-[#F8F5F0] px-4 py-3"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#A3A3A3]">{label}</p><p className="mt-1 text-sm font-semibold text-[#111111]">{value}</p></div>)}
+        {[["Số vay ban đầu", formatMoney(loan.original)], ["Đã trả gốc", formatMoney(paidPrincipal)], ["Đã trả lãi/phí", formatMoney(loan.paidInterest)], ["Ngày vay", loan.startDate ? shortDate(loan.startDate) : "Chưa lưu"], ["Đến hạn", shortDate(loan.nextDue)]].map(([label, value]) => <div key={label} className="rounded-2xl bg-[#F8F5F0] px-4 py-3"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#A3A3A3]">{label}</p><p className="mt-1 text-sm font-semibold text-[#111111]">{value}</p></div>)}
       </div>
       {loan.note && <div className="rounded-2xl border border-black/[0.06] bg-white px-4 py-3 text-sm text-[#666666]">{loan.note}</div>}
       <div className="sticky bottom-0 grid grid-cols-4 gap-2 border-t border-black/[0.06] bg-white pt-4">
@@ -410,36 +439,33 @@ function LoanDetailModal({ loan, onClose, onPay, onDisburse, onEdit, onAdjust, o
 }
 
 function EditLoanModal({ loan, hasTransactions, onClose, onSave }: { loan: Loan; hasTransactions: boolean; onClose: () => void; onSave: (loan: Loan) => void }) {
-  const [draft, setDraft] = useState<Loan>({ ...loan, startDate: loan.startDate ?? todayISO(), termMonths: loan.termMonths ?? 0, note: loan.note ?? "" });
+  const [draft, setDraft] = useState<Loan>({ ...loan, type: normalizeLoanType(loan.type), startDate: loan.startDate ?? todayISO(), termMonths: loan.termMonths ?? 0, note: loan.note ?? "" });
   const [originalText, setOriginalText] = useState(String(loan.original));
-  const changed = JSON.stringify({ ...draft, original: hasTransactions ? loan.original : parseMoney(originalText) }) !== JSON.stringify(loan);
+  const changed = JSON.stringify({ ...draft, original: hasTransactions ? loan.original : parseMoney(originalText) }) !== JSON.stringify({ ...loan, type: normalizeLoanType(loan.type), note: loan.note ?? "", startDate: loan.startDate ?? todayISO(), termMonths: loan.termMonths ?? 0 });
   const invalidDueDate = Boolean(draft.startDate && draft.nextDue < draft.startDate);
-  const canSave = draft.name.trim().length > 0 && draft.rate >= 0 && draft.monthly >= 0 && !invalidDueDate && !(draft.status === "settled" && loan.outstanding > 0) && changed;
+  const canSave = draft.name.trim().length > 0 && draft.rate >= 0 && !invalidDueDate && !(draft.status === "settled" && loan.outstanding > 0) && changed;
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!canSave) return;
     const nextOriginal = hasTransactions ? loan.original : parseMoney(originalText);
-    onSave({ ...draft, name: draft.name.trim(), original: nextOriginal, outstanding: hasTransactions ? loan.outstanding : nextOriginal });
+    onSave({ ...draft, name: draft.name.trim(), type: normalizeLoanType(draft.type), original: nextOriginal, outstanding: hasTransactions ? loan.outstanding : nextOriginal, monthly: loan.monthly ?? 0 });
   }
 
   return <ModalShell title="Sửa khoản vay" subtitle="Chỉ sửa thông tin mô tả, không sửa trực tiếp dư nợ" onClose={onClose}>
     <form onSubmit={submit} className="space-y-4">
       <Field label="Tên khoản vay"><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} className={inputClass} /></Field>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field label="Loại khoản vay"><CustomSelect title="Chọn loại khoản vay" value={draft.type} onChange={(next) => setDraft({ ...draft, type: next as LoanKind })} options={loanTypeOptions.filter((item) => item.value !== "all").map((item) => ({ value: item.value, label: item.label }))} /></Field>
-        <Field label="Trạng thái"><CustomSelect title="Chọn trạng thái" value={draft.status} onChange={(next) => setDraft({ ...draft, status: next as Loan["status"] })} options={loanStatusOptions.map((item) => ({ value: item.value, label: item.label, sub: item.sub }))} /></Field>
-      </div>
+      <Field label="Loại khoản vay"><LoanTypeSegmented value={normalizeLoanType(draft.type)} onChange={(next) => setDraft({ ...draft, type: next })} /></Field>
       <Field label="Chủ nợ / Ngân hàng / Người cho vay"><input value={draft.bank} onChange={(event) => setDraft({ ...draft, bank: event.target.value })} className={inputClass} /></Field>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Trạng thái"><CustomSelect title="Chọn trạng thái" value={draft.status} onChange={(next) => setDraft({ ...draft, status: next as Loan["status"] })} options={loanStatusOptions.map((item) => ({ value: item.value, label: item.label, sub: item.sub }))} /></Field>
+        <Field label="Lãi suất %/năm"><input value={String(draft.rate)} onChange={(event) => setDraft({ ...draft, rate: Number(event.target.value) || 0 })} inputMode="decimal" className={inputClass} /></Field>
+      </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="Số tiền vay ban đầu"><input value={originalText} disabled={hasTransactions} onChange={(event) => setOriginalText(event.target.value)} inputMode="numeric" className={cn(inputClass, hasTransactions && "bg-[#F5F5F5] text-[#A3A3A3]")} /></Field>
         <Field label="Dư nợ hiện tại"><input value={formatMoney(loan.outstanding)} disabled className={cn(inputClass, "bg-[#F5F5F5] text-[#A3A3A3]")} /></Field>
       </div>
       {hasTransactions && <p className="rounded-2xl bg-[#F8F5F0] px-4 py-3 text-xs font-semibold text-[#666666]">Khoản vay đã có giao dịch nên số vay ban đầu và dư nợ được khóa. Nếu số dư sai, dùng Điều chỉnh dư nợ.</p>}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field label="Lãi suất %/năm"><input value={String(draft.rate)} onChange={(event) => setDraft({ ...draft, rate: Number(event.target.value) || 0 })} inputMode="decimal" className={inputClass} /></Field>
-        <Field label="Số tiền trả mỗi kỳ"><input value={String(draft.monthly)} onChange={(event) => setDraft({ ...draft, monthly: parseMoney(event.target.value) })} inputMode="numeric" className={inputClass} /></Field>
-      </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <QuickDateField label="Ngày vay" value={draft.startDate ?? todayISO()} onChange={(next) => setDraft({ ...draft, startDate: next })} />
         <QuickDateField label="Ngày đến hạn" value={draft.nextDue} onChange={(next) => setDraft({ ...draft, nextDue: next })} />
@@ -472,6 +498,58 @@ function AdjustLoanDebtModal({ loan, onClose, onSave }: { loan: Loan; onClose: (
   </ModalShell>;
 }
 
+function AddCardModal({ onClose, onAdd }: { onClose: () => void; onAdd: (card: CreditCardDebt) => void }) {
+  const [name, setName] = useState("Thẻ tín dụng mới");
+  const [bank, setBank] = useState("");
+  const [limit, setLimit] = useState("0");
+  const [used, setUsed] = useState("0");
+  const [statementDate, setStatementDate] = useState(todayISO());
+  const [dueDate, setDueDate] = useState(todayISO());
+  const [rate, setRate] = useState("0");
+  const [last4, setLast4] = useState("");
+  const [note, setNote] = useState("");
+  const limitValue = parseMoney(limit);
+  const usedValue = parseMoney(used);
+  const canSave = name.trim().length > 0 && bank.trim().length > 0 && limitValue > 0 && usedValue >= 0 && usedValue <= limitValue;
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!canSave) return;
+    onAdd({
+      id: `card-${Date.now()}`,
+      name: name.trim(),
+      bank: bank.trim(),
+      limit: limitValue,
+      used: usedValue,
+      statementDate,
+      dueDate,
+      color: "#B22222",
+      last4: last4 || "0000",
+      status: "active",
+      note: note.trim() || (rate ? `Lãi suất ${rate}%/năm` : ""),
+    });
+  }
+
+  return <ModalShell title="Thêm thẻ tín dụng" subtitle="Thẻ tín dụng là nghĩa vụ nợ, được quản lý trong Khoản vay" onClose={onClose}>
+    <form onSubmit={submit} className="space-y-4">
+      <Field label="Tên thẻ"><input value={name} onChange={(event) => setName(event.target.value)} className={inputClass} placeholder="Ví dụ: Thẻ tín dụng VCB" /></Field>
+      <Field label="Ngân hàng phát hành"><input value={bank} onChange={(event) => setBank(event.target.value)} className={inputClass} placeholder="Ví dụ: VCB" /></Field>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Hạn mức tín dụng"><input value={limit} onChange={(event) => setLimit(event.target.value)} inputMode="numeric" className={inputClass} /></Field>
+        <Field label="Dư nợ ban đầu"><input value={used} onChange={(event) => setUsed(event.target.value)} inputMode="numeric" className={inputClass} /></Field>
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Lãi suất nếu có"><input value={rate} onChange={(event) => setRate(event.target.value)} inputMode="decimal" className={inputClass} placeholder="0" /></Field>
+        <Field label="4 số cuối thẻ"><input value={last4} onChange={(event) => setLast4(event.target.value.replace(/[^0-9]/g, "").slice(0, 4))} inputMode="numeric" className={inputClass} placeholder="0000" /></Field>
+      </div>
+      <Field label="Ghi chú"><textarea value={note} onChange={(event) => setNote(event.target.value)} className={textareaClass} placeholder="Ghi chú" /></Field>
+      <div className="rounded-2xl bg-[#F8F5F0] px-4 py-3 text-sm text-[#666666]">Thẻ mới sẽ xuất hiện trong Khoản vay và cũng hiện ở Cá nhân để chọn khi ghi nhận chi tiêu. Chi tiêu bằng thẻ tăng dư nợ thẻ, không làm giảm ví cá nhân tại thời điểm mua.</div>
+      {usedValue > limitValue && <p className="rounded-xl bg-[#FEF2F2] px-3 py-2 text-xs font-semibold text-[#B22222]">Dư nợ ban đầu không được lớn hơn hạn mức thẻ.</p>}
+      <div className="grid grid-cols-2 gap-3 pt-1"><button type="button" onClick={onClose} className="h-13 rounded-2xl border border-black/[0.08] bg-white text-sm font-semibold text-[#111111]">Hủy</button><button type="submit" disabled={!canSave} className="h-13 rounded-2xl bg-[#B22222] text-sm font-semibold text-white shadow-lg shadow-[#B22222]/20 disabled:bg-[#D4D4D4] disabled:shadow-none">Lưu thẻ</button></div>
+    </form>
+  </ModalShell>;
+}
+
 function CardDetailModal({ card, onClose, onPay, onEdit, onAdjust, onHide }: { card: CreditCardDebt; onClose: () => void; onPay: () => void; onEdit: () => void; onAdjust: () => void; onHide: () => void }) {
   const [moreOpen, setMoreOpen] = useState(false);
   return <ModalShell title="Chi tiết thẻ tín dụng" subtitle={card.name} onClose={onClose}>
@@ -482,7 +560,7 @@ function CardDetailModal({ card, onClose, onPay, onEdit, onAdjust, onHide }: { c
         <p className="text-xs text-white/55">Dư nợ hiện tại</p>
       </div>
       <div className="grid grid-cols-2 gap-3">
-        {[["Hạn mức", formatMoney(card.limit)], ["Còn lại", formatMoney(Math.max(0, card.limit - card.used))], ["Ngày sao kê", shortDate(card.statementDate)], ["Ngày đến hạn", shortDate(card.dueDate)], ["Trạng thái", statusLabel(card.status)]].map(([label, value]) => <div key={label} className="rounded-2xl bg-[#F8F5F0] px-4 py-3"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#A3A3A3]">{label}</p><p className="mt-1 text-sm font-semibold text-[#111111]">{value}</p></div>)}
+        {[["Hạn mức", formatMoney(card.limit)], ["Còn lại", formatMoney(Math.max(0, card.limit - card.used))], ["Trạng thái", statusLabel(card.status)]].map(([label, value]) => <div key={label} className="rounded-2xl bg-[#F8F5F0] px-4 py-3"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#A3A3A3]">{label}</p><p className="mt-1 text-sm font-semibold text-[#111111]">{value}</p></div>)}
       </div>
       {card.note && <div className="rounded-2xl border border-black/[0.06] bg-white px-4 py-3 text-sm text-[#666666]">{card.note}</div>}
       <div className="sticky bottom-0 grid grid-cols-3 gap-2 border-t border-black/[0.06] bg-white pt-4">
@@ -512,14 +590,7 @@ function EditCardModal({ card, onClose, onSave }: { card: CreditCardDebt; onClos
         <Field label="Hạn mức"><input value={String(draft.limit)} onChange={(event) => setDraft({ ...draft, limit: parseMoney(event.target.value) })} inputMode="numeric" className={inputClass} /></Field>
         <Field label="Dư nợ hiện tại"><input value={formatMoney(card.used)} disabled className={cn(inputClass, "bg-[#F5F5F5] text-[#A3A3A3]")} /></Field>
       </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <QuickDateField label="Ngày sao kê" value={draft.statementDate} onChange={(next) => setDraft({ ...draft, statementDate: next })} />
-        <QuickDateField label="Ngày đến hạn thanh toán" value={draft.dueDate} onChange={(next) => setDraft({ ...draft, dueDate: next })} />
-      </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field label="4 số cuối thẻ"><input value={draft.last4} onChange={(event) => setDraft({ ...draft, last4: event.target.value.replace(/[^0-9]/g, "").slice(0, 4) })} className={inputClass} /></Field>
-        <Field label="Trạng thái"><CustomSelect title="Chọn trạng thái thẻ" value={draft.status} onChange={(next) => setDraft({ ...draft, status: next as CreditCardDebt["status"] })} options={cardStatusOptions.map((item) => ({ value: item.value, label: item.label, sub: item.sub }))} /></Field>
-      </div>
+
       <Field label="Ghi chú"><textarea value={draft.note ?? ""} onChange={(event) => setDraft({ ...draft, note: event.target.value })} className={textareaClass} placeholder="Ghi chú" /></Field>
       {draft.limit < card.used && <p className="rounded-xl bg-[#FEF2F2] px-3 py-2 text-xs font-semibold text-[#B22222]">Hạn mức không được nhỏ hơn dư nợ hiện tại.</p>}
       <div className="grid grid-cols-2 gap-3 pt-1"><button type="button" onClick={onClose} className="h-13 rounded-2xl border border-black/[0.08] bg-white text-sm font-semibold text-[#111111]">Hủy</button><button type="submit" disabled={!canSave} className="h-13 rounded-2xl bg-[#B22222] text-sm font-semibold text-white disabled:bg-[#D4D4D4]">Lưu thay đổi</button></div>
@@ -549,28 +620,53 @@ function AdjustCardDebtModal({ card, onClose, onSave }: { card: CreditCardDebt; 
 
 
 function EditLoanTransactionModal({ transaction, onClose, onSave }: { transaction: CashflowTransaction; onClose: () => void; onSave: (updated: CashflowTransaction) => void }) {
-  const [name, setName] = useState(transaction.name);
-  const [date, setDate] = useState(transaction.date);
-  const [amount, setAmount] = useState(String(Math.abs(transaction.amount)));
+  const accounts = useMemo(() => selectablePersonalAccounts(), []);
+  const initialSource = transaction.source || accounts[0]?.name || "";
+  const sourceOptions = [
+    ...accounts.map((account) => ({
+      value: account.name,
+      label: account.name,
+      sub: `Cá nhân · ${formatMoney(account.balance)}`,
+    })),
+    ...(initialSource && !accounts.some((account) => account.name === initialSource)
+      ? [{ value: initialSource, label: initialSource, sub: "Nguồn hiện tại" }]
+      : []),
+  ];
+  const [name, setName] = useState(transaction.name || "Giao dịch khoản vay");
+  const [date, setDate] = useState(transaction.date || todayISO());
+  const [source, setSource] = useState(initialSource);
+  const [amount, setAmount] = useState(String(Math.abs(transaction.amount || 0)));
   const [note, setNote] = useState(transaction.note || "");
   const amountValue = parseMoney(amount);
   const canEditAmount = transaction.kind !== "adjustment";
-  const canSave = name.trim().length > 0 && (!canEditAmount || amountValue > 0);
+  const canSave = name.trim().length > 0 && source.trim().length > 0 && (!canEditAmount || amountValue > 0);
+  const isInterestOrFee = transaction.kind === "loan_interest";
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!canSave) return;
-    onSave({ ...transaction, name: name.trim(), date, amount: canEditAmount ? amountValue : transaction.amount, note: note.trim() });
+    onSave({
+      ...transaction,
+      name: name.trim(),
+      date,
+      source,
+      amount: canEditAmount ? amountValue : transaction.amount,
+      note: note.trim(),
+    });
   }
 
   return <ModalShell title="Điều chỉnh giao dịch" subtitle="Khoản vay · cập nhật giao dịch đã thao tác sai" onClose={onClose}>
     <form onSubmit={submit} className="space-y-4">
       <QuickDateField label="Ngày giao dịch" value={date} onChange={setDate} />
       <Field label="Tên giao dịch"><input value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
+      <Field label="Tài khoản / nguồn tiền">
+        <CustomSelect title="Chọn tài khoản / nguồn tiền" value={source} onChange={setSource} options={sourceOptions} />
+      </Field>
       <Field label="Số tiền"><input value={amount} disabled={!canEditAmount} onChange={(event) => setAmount(event.target.value)} inputMode="numeric" className={cn(inputClass, !canEditAmount && "bg-[#F5F5F5] text-[#A3A3A3]")} /></Field>
-      {!canEditAmount && <p className="rounded-2xl bg-[#F8F5F0] px-4 py-3 text-xs font-semibold text-[#666666]">Giao dịch điều chỉnh dư nợ không sửa số tiền trực tiếp. Nếu sai dư nợ, dùng chức năng Điều chỉnh dư nợ của khoản vay/thẻ.</p>}
-      <div className="rounded-2xl bg-[#F8F5F0] px-4 py-3 text-xs leading-relaxed text-[#666666]">Khi lưu, FinHome sẽ đảo tác động của giao dịch cũ rồi áp dụng lại giao dịch mới để tránh lệch dư nợ, thẻ hoặc tài khoản cá nhân.</div>
+      {isInterestOrFee && <p className="rounded-2xl bg-[#F8F5F0] px-4 py-3 text-xs font-semibold leading-relaxed text-[#666666]">Trả lãi/phí chỉ ảnh hưởng chi phí tài chính và số dư ví, không làm thay đổi dư nợ gốc khoản vay.</p>}
+      {!canEditAmount && <p className="rounded-2xl bg-[#F8F5F0] px-4 py-3 text-xs font-semibold leading-relaxed text-[#666666]">Giao dịch điều chỉnh dư nợ không sửa số tiền trực tiếp. Nếu sai dư nợ, dùng chức năng Điều chỉnh dư nợ của khoản vay hoặc thẻ.</p>}
       <Field label="Ghi chú"><textarea value={note} onChange={(event) => setNote(event.target.value)} className={textareaClass} placeholder="Ghi chú" /></Field>
+      <div className="rounded-2xl bg-[#F8F5F0] px-4 py-3 text-xs leading-relaxed text-[#666666]">Khi lưu, FinHome sẽ đảo tác động của giao dịch cũ rồi áp dụng lại giao dịch mới để tránh lệch dư nợ, thẻ hoặc tài khoản cá nhân.</div>
       <div className="grid grid-cols-2 gap-3 pt-1"><button type="button" onClick={onClose} className="h-13 rounded-2xl border border-black/[0.08] bg-white text-sm font-semibold text-[#111111]">Hủy</button><button type="submit" disabled={!canSave} className="h-13 rounded-2xl bg-[#B22222] text-sm font-semibold text-white disabled:bg-[#D4D4D4]">Lưu thay đổi</button></div>
     </form>
   </ModalShell>;
@@ -584,6 +680,7 @@ export function LoansPage() {
   const [groupFilter, setGroupFilter] = useState<DebtGroupFilter>("all");
   const [loanTypeFilter, setLoanTypeFilter] = useState<LoanTypeFilter>("all");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [showSettledLoans, setShowSettledLoans] = useState(false);
   const [modal, setModal] = useState<LoanModal>(null);
   const [cards, setCards] = useState<CreditCardDebt[]>(() => loadStoredCards());
   const [loanItems, setLoanItems] = useState<Loan[]>(() => loadStoredLoans());
@@ -592,17 +689,20 @@ export function LoansPage() {
     saveStoredLoans(loanItems);
   }, [loanItems]);
 
-  const activeLoans = loanItems.filter((loan) => loan.status !== "settled" && loan.status !== "closed");
+  const activeLoans = loanItems.filter((loan) => loan.outstanding > 0 && loan.status !== "settled" && loan.status !== "closed");
+  const settledLoans = loanItems.filter((loan) => loan.outstanding === 0 || loan.status === "settled");
   const creditCardDebt = cards.reduce((sum, card) => sum + card.used, 0);
   const totalDebt = activeLoans.reduce((sum, loan) => sum + loan.outstanding, 0) + creditCardDebt;
   const visibleLoans = activeLoans.filter((loan) => loanTypeFilter === "all" || loan.type === loanTypeFilter);
+  const visibleSettledLoans = settledLoans.filter((loan) => loanTypeFilter === "all" || loan.type === loanTypeFilter);
   const showLoanSection = groupFilter === "all" || groupFilter === "loan";
   const showCreditSection = groupFilter === "all" || groupFilter === "credit";
   const monthlyDue = activeLoans.reduce((sum, loan) => sum + loan.monthly, 0);
   const totalInterest = periodLoanTransactions.filter((tx) => tx.kind === "loan_interest").reduce((sum, tx) => sum + tx.amount, 0);
   const dueSoon = activeLoans.filter((loan) => ["dueSoon", "overdue"].includes(loan.status)).length;
-  const selectedLoan = modal?.type === "pay" || modal?.type === "disburse" ? loanItems.find((loan) => loan.id === modal.loanId) : undefined;
-  const selectedCard = modal?.type === "cardPay" ? cards.find((card) => card.id === modal.cardId) : undefined;
+  const selectedLoan = modal && "loanId" in modal ? loanItems.find((loan) => loan.id === modal.loanId) : undefined;
+  const selectedCard = modal && "cardId" in modal ? cards.find((card) => card.id === modal.cardId) : undefined;
+  const selectedLoanTransaction = modal?.type === "txEdit" ? loanTransactions.find((transaction) => transaction.id === modal.transactionId) : undefined;
 
   function addLoan(loan: Loan, accountId: string, disburse: boolean, date: string) {
     const nextLoans = [loan, ...loanItems];
@@ -703,18 +803,23 @@ export function LoansPage() {
 
 
   function findLoanForTransaction(transaction: CashflowTransaction) {
-    return loanItems.find((loan) => transaction.id.includes(loan.id) || transaction.note.includes(loan.name) || transaction.source.includes(loan.name));
+    const source = transaction.source ?? "";
+    const note = transaction.note ?? "";
+    return loanItems.find((loan) => transaction.id.includes(loan.id) || note.includes(loan.name) || source.includes(loan.name));
   }
 
   function findCardForTransaction(transaction: CashflowTransaction) {
-    return cards.find((card) => transaction.id.includes(card.id) || transaction.source.includes(card.name) || transaction.note.includes(card.name));
+    const source = transaction.source ?? "";
+    const note = transaction.note ?? "";
+    return cards.find((card) => transaction.id.includes(card.id) || source.includes(card.name) || note.includes(card.name));
   }
 
   function applyLoanHistoryTransaction(transaction: CashflowTransaction, direction: 1 | -1) {
-    const amount = Math.abs(transaction.amount);
+    const amount = Math.abs(transaction.amount || 0);
     if (amount <= 0) return;
-    const [from] = transaction.source.split(" -> ");
-    const accounts = loadStoredAccounts();
+    const source = transaction.source ?? "";
+    const [from] = source.split(" -> ");
+    const accounts = selectablePersonalAccounts();
 
     if (transaction.kind === "loan_disbursement") {
       const loan = findLoanForTransaction(transaction);
@@ -723,7 +828,7 @@ export function LoansPage() {
         setLoanItems(nextLoans);
         saveStoredLoans(nextLoans);
       }
-      saveStoredAccounts(accounts.map((account) => account.name === transaction.source ? { ...account, balance: account.balance + amount * direction } : account));
+      saveStoredAccounts(accounts.map((account) => account.name === source ? { ...account, balance: account.balance + amount * direction } : account));
       return;
     }
 
@@ -734,7 +839,7 @@ export function LoansPage() {
         setLoanItems(nextLoans);
         saveStoredLoans(nextLoans);
       }
-      saveStoredAccounts(accounts.map((account) => account.name === transaction.source ? { ...account, balance: account.balance - amount * direction } : account));
+      saveStoredAccounts(accounts.map((account) => account.name === source ? { ...account, balance: account.balance - amount * direction } : account));
       return;
     }
 
@@ -745,7 +850,7 @@ export function LoansPage() {
         setLoanItems(nextLoans);
         saveStoredLoans(nextLoans);
       }
-      saveStoredAccounts(accounts.map((account) => account.name === transaction.source ? { ...account, balance: account.balance - amount * direction } : account));
+      saveStoredAccounts(accounts.map((account) => account.name === source ? { ...account, balance: account.balance - amount * direction } : account));
       return;
     }
 
@@ -782,7 +887,7 @@ export function LoansPage() {
   }
 
   function saveLoanEdit(nextLoan: Loan) {
-    const nextLoans = loanItems.map((item) => item.id === nextLoan.id ? nextLoan : item);
+    const nextLoans = loanItems.map((item) => item.id === nextLoan.id ? normalizeLoanRecord(nextLoan) : item);
     setLoanItems(nextLoans);
     saveStoredLoans(nextLoans);
     setModal({ type: "detail", loanId: nextLoan.id });
@@ -793,7 +898,7 @@ export function LoansPage() {
     const loan = loanItems.find((item) => item.id === loanId);
     if (!loan || newOutstanding < 0) return;
     const diff = newOutstanding - loan.outstanding;
-    const nextLoans = loanItems.map((item) => item.id === loanId ? { ...item, outstanding: newOutstanding, status: newOutstanding === 0 ? "settled" as const : item.status === "settled" ? "active" as const : item.status } : item);
+    const nextLoans = loanItems.map((item) => item.id === loanId ? normalizeLoanRecord({ ...item, outstanding: newOutstanding }) : item);
     setLoanItems(nextLoans);
     saveStoredLoans(nextLoans);
     appendStoredPersonalTransaction({
@@ -828,6 +933,14 @@ export function LoansPage() {
     const loan = loanItems.find((item) => item.id === loanId);
     if (!loan) return;
     saveLoanEdit({ ...loan, status: "closed" });
+  }
+
+  function addCreditCard(card: CreditCardDebt) {
+    const nextCards = [card, ...cards];
+    setCards(nextCards);
+    saveStoredCards(nextCards);
+    setModal({ type: "cardDetail", cardId: card.id });
+    showToast("Đã thêm thẻ tín dụng");
   }
 
   function saveCardEdit(nextCard: CreditCardDebt) {
@@ -909,7 +1022,7 @@ export function LoansPage() {
 
   return <div className="min-h-full bg-[#F9F9F9]"><div className="mx-auto max-w-[1200px] space-y-6 px-6 py-8 lg:px-8">
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-[#A3A3A3]">Nghĩa vụ nợ phải trả</p><h1 className="text-[1.75rem] font-semibold text-[#111111]">Khoản vay</h1></div><div className="flex flex-wrap items-center justify-end gap-2"><WorkspaceTimeFilter onChange={setTimeRange} /><button onClick={() => setModal({ type: "add" })} className="flex items-center gap-1.5 rounded-xl bg-[#B22222] px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#B22222]/20"><Plus className="size-4" /> <span className="hidden sm:inline">Thêm khoản vay</span><span className="sm:hidden">Khoản vay</span></button></div></div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-[#A3A3A3]">Nghĩa vụ nợ phải trả</p><h1 className="text-[1.75rem] font-semibold text-[#111111]">Khoản vay</h1></div><div className="flex flex-wrap items-center justify-end gap-2"><WorkspaceTimeFilter value={timeRange} onChange={setTimeRange} /><button onClick={() => setModal({ type: "addCard" })} className="flex items-center gap-1.5 rounded-xl border border-black/[0.08] bg-white px-4 py-2.5 text-sm font-semibold text-[#111111] shadow-sm"><CreditCard className="size-4" /> <span className="hidden sm:inline">Thêm thẻ tín dụng</span><span className="sm:hidden">Thẻ</span></button><button onClick={() => setModal({ type: "add" })} className="flex items-center gap-1.5 rounded-xl bg-[#B22222] px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#B22222]/20"><Plus className="size-4" /> <span className="hidden sm:inline">Thêm khoản vay</span><span className="sm:hidden">Khoản vay</span></button></div></div>
     </motion.div>
 
     <div className="space-y-3">
@@ -953,24 +1066,63 @@ export function LoansPage() {
       const open = expanded === loan.id;
       return <motion.div key={loan.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04 }} className="overflow-hidden rounded-2xl border border-black/[0.07] bg-white">
         <button onClick={() => setModal({ type: "detail", loanId: loan.id })} className="flex w-full items-center gap-4 px-5 py-4 text-left hover:bg-[#FAFAFA]"><div className="flex size-10 items-center justify-center rounded-xl bg-[#F5F5F5]"><Icon className="size-4.5 text-[#666666]" /></div><div className="flex-1"><div className="flex flex-wrap items-center gap-2"><p className="text-sm font-semibold">{loan.name}</p>{loan.status === "overdue" && <span className="flex items-center gap-1 rounded-full bg-[#FEF2F2] px-2 py-0.5 text-[9px] font-bold text-[#DC2626]"><AlertCircle className="size-2.5" /> Quá hạn</span>}<span className="rounded-full bg-[#F5F5F5] px-2 py-0.5 text-[9px] font-semibold text-[#A3A3A3]">{loan.status === "dueSoon" ? "Sắp đến hạn" : "Đang vay"}</span></div><p className="mt-0.5 text-xs text-[#A3A3A3]">{loan.bank} · {loan.rate}%/năm · đến hạn {shortDate(loan.nextDue)}</p></div><div className="text-right"><p className="text-base font-semibold text-[#B22222]">{formatMoney(loan.outstanding)}</p><p className="text-[10px] text-[#A3A3A3]">dư nợ</p></div><span className="text-xs font-semibold text-[#B22222]">Chi tiết</span></button>
-        <AnimatePresence>{open && <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden border-t border-black/[0.05]"><div className="space-y-4 p-5"><div><div className="mb-1 flex justify-between text-xs"><span>Đã trả gốc {formatMoney(loan.original - loan.outstanding)}</span><span className="font-semibold text-[#166534]">{paidPct}%</span></div><div className="h-2 rounded-full bg-[#F5F5F5]"><div className="h-full rounded-full bg-[#166534]" style={{ width: `${Math.min(100, Math.max(0, paidPct))}%` }} /></div></div><div className="grid grid-cols-2 gap-3 md:grid-cols-4">{[["Số vay ban đầu", formatMoney(loan.original)], ["Trả mỗi kỳ", formatMoney(loan.monthly)], ["Lãi đã trả", formatMoney(loan.paidInterest)], ["Lãi suất", `${loan.rate}%`]].map(([label, value]) => <div key={label}><p className="mb-1 text-[10px] font-semibold uppercase text-[#A3A3A3]">{label}</p><p className="text-sm font-semibold">{value}</p></div>)}</div><div className="flex flex-wrap gap-2"><button onClick={() => setModal({ type: "disburse", loanId: loan.id })} className="flex items-center gap-1.5 rounded-xl bg-[#B22222] px-3.5 py-2 text-xs font-semibold text-white"><Plus className="size-3.5" /> Giải ngân thêm</button><button onClick={() => setModal({ type: "pay", loanId: loan.id })} className="flex items-center gap-1.5 rounded-xl bg-[#111111] px-3.5 py-2 text-xs font-semibold text-white"><Calendar className="size-3.5" /> Thanh toán khoản vay</button></div></div></motion.div>}</AnimatePresence>
+        <AnimatePresence>{open && <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden border-t border-black/[0.05]"><div className="space-y-4 p-5"><div><div className="mb-1 flex justify-between text-xs"><span>Đã trả gốc {formatMoney(loan.original - loan.outstanding)}</span><span className="font-semibold text-[#166534]">{paidPct}%</span></div><div className="h-2 rounded-full bg-[#F5F5F5]"><div className="h-full rounded-full bg-[#166534]" style={{ width: `${Math.min(100, Math.max(0, paidPct))}%` }} /></div></div><div className="grid grid-cols-2 gap-3 md:grid-cols-4">{[["Số vay ban đầu", formatMoney(loan.original)], ["Lãi đã trả", formatMoney(loan.paidInterest)], ["Lãi suất", `${loan.rate}%`]].map(([label, value]) => <div key={label}><p className="mb-1 text-[10px] font-semibold uppercase text-[#A3A3A3]">{label}</p><p className="text-sm font-semibold">{value}</p></div>)}</div><div className="flex flex-wrap gap-2"><button onClick={() => setModal({ type: "disburse", loanId: loan.id })} className="flex items-center gap-1.5 rounded-xl bg-[#B22222] px-3.5 py-2 text-xs font-semibold text-white"><Plus className="size-3.5" /> Giải ngân thêm</button><button onClick={() => setModal({ type: "pay", loanId: loan.id })} className="flex items-center gap-1.5 rounded-xl bg-[#111111] px-3.5 py-2 text-xs font-semibold text-white"><Calendar className="size-3.5" /> Thanh toán khoản vay</button></div></div></motion.div>}</AnimatePresence>
       </motion.div>;
     })}</div></section>}
+
+    {showLoanSection && <section className="space-y-3">
+      <button
+        type="button"
+        onClick={() => setShowSettledLoans((value) => !value)}
+        className="flex w-full items-center justify-between rounded-2xl border border-black/[0.07] bg-white px-5 py-4 text-left shadow-sm transition hover:bg-[#FAFAFA]"
+      >
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#A3A3A3]">Đã tất toán</p>
+          <p className="mt-1 text-sm font-semibold text-[#111111]">Xem khoản vay đã tất toán</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="rounded-full bg-[#F5F5F5] px-3 py-1 text-xs font-semibold text-[#737373]">{visibleSettledLoans.length} khoản</span>
+          {showSettledLoans ? <ChevronUp className="size-4 text-[#B22222]" /> : <ChevronDown className="size-4 text-[#737373]" />}
+        </div>
+      </button>
+      <AnimatePresence>
+        {showSettledLoans && <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} className="space-y-3">
+          {visibleSettledLoans.length === 0 ? <div className="rounded-2xl border border-dashed border-black/[0.12] bg-white px-5 py-6 text-sm text-[#737373]">Chưa có khoản vay đã tất toán.</div> : visibleSettledLoans.map((loan) => {
+            const Icon = icons[loan.type] ?? Building;
+            return <button key={loan.id} type="button" onClick={() => setModal({ type: "detail", loanId: loan.id })} className="flex w-full items-center gap-4 rounded-2xl border border-black/[0.07] bg-white px-5 py-4 text-left transition hover:bg-[#FAFAFA]">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-[#F5F5F5]"><Icon className="size-4.5 text-[#737373]" /></div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="truncate text-sm font-semibold text-[#111111]">{loan.name}</p>
+                  <span className="rounded-full bg-[#ECFDF3] px-2 py-0.5 text-[9px] font-bold text-[#166534]">Đã tất toán</span>
+                </div>
+                <p className="mt-0.5 text-xs text-[#A3A3A3]">{loan.bank} · lịch sử giao dịch vẫn được giữ</p>
+              </div>
+              <div className="text-right">
+                <p className="text-base font-semibold text-[#111111]">0 đ</p>
+                <p className="text-[10px] text-[#A3A3A3]">dư nợ</p>
+              </div>
+            </button>;
+          })}
+        </motion.div>}
+      </AnimatePresence>
+    </section>}
 
     {showCreditSection && <section className="space-y-3">
       <div className="flex items-end justify-between gap-3">
         <div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#A3A3A3]">Thẻ tín dụng</p><h2 className="mt-1 text-xl font-semibold text-[#111111]">Dư nợ thẻ</h2></div>
-        <span className="rounded-full bg-[#F5F5F5] px-3 py-1 text-xs font-semibold text-[#737373]">{cards.length} thẻ</span>
+        <div className="flex items-center gap-2"><span className="rounded-full bg-[#F5F5F5] px-3 py-1 text-xs font-semibold text-[#737373]">{cards.length} thẻ</span><button type="button" onClick={() => setModal({ type: "addCard" })} className="rounded-full bg-[#B22222] px-3 py-1.5 text-xs font-semibold text-white">+ Thêm thẻ</button></div>
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">{cards.map((card) => {
       const pct = card.limit > 0 ? Math.round((card.used / card.limit) * 100) : 0;
-      return <div key={card.id} className="rounded-2xl border border-black/[0.07] bg-white p-5 shadow-sm"><button type="button" onClick={() => setModal({ type: "cardDetail", cardId: card.id })} className="mb-4 w-full rounded-2xl p-5 text-left text-white" style={{ background: card.color }}><div className="flex items-start justify-between gap-3"><div><p className="text-xs text-white/50">{card.bank}</p><p className="font-semibold">{card.name}</p></div><p className="text-xs text-white/40">•••• {card.last4}</p></div><p className="mt-6 text-2xl font-semibold">{formatMoney(card.used)}</p><p className="text-xs text-white/45">Dư nợ hiện tại</p><div className="mt-4 grid grid-cols-2 gap-3 border-t border-white/15 pt-3"><div><p className="text-[10px] text-white/45">Hạn mức</p><p className="text-sm font-semibold">{formatMoney(card.limit)}</p></div><div><p className="text-[10px] text-white/45">Còn lại</p><p className="text-sm font-semibold">{formatMoney(Math.max(0, card.limit - card.used))}</p></div></div></button><div className="mb-1 flex justify-between text-xs"><span>Hạn mức đã dùng</span><span>{pct}%</span></div><div className="mb-4 h-1.5 rounded-full bg-[#F5F5F5]"><div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: card.color }} /></div><p className="text-xs text-[#666666]">Sao kê {shortDate(card.statementDate)} · đến hạn {shortDate(card.dueDate)}. Thanh toán thẻ không ghi nhận chi tiêu lần hai.</p><button onClick={() => setModal({ type: "cardPay", cardId: card.id })} className="mt-4 w-full rounded-xl bg-[#111111] px-3.5 py-2.5 text-xs font-semibold text-white">Thanh toán thẻ tín dụng</button></div>;
+      return <div key={card.id} className="rounded-2xl border border-black/[0.07] bg-white p-5 shadow-sm"><button type="button" onClick={() => setModal({ type: "cardDetail", cardId: card.id })} className="mb-4 w-full rounded-2xl p-5 text-left text-white" style={{ background: card.color }}><div className="flex items-start justify-between gap-3"><div><p className="text-xs text-white/50">{card.bank}</p><p className="font-semibold">{card.name}</p></div><p className="text-xs text-white/40">•••• {card.last4}</p></div><p className="mt-6 text-2xl font-semibold">{formatMoney(card.used)}</p><p className="text-xs text-white/45">Dư nợ hiện tại</p><div className="mt-4 grid grid-cols-2 gap-3 border-t border-white/15 pt-3"><div><p className="text-[10px] text-white/45">Hạn mức</p><p className="text-sm font-semibold">{formatMoney(card.limit)}</p></div><div><p className="text-[10px] text-white/45">Còn lại</p><p className="text-sm font-semibold">{formatMoney(Math.max(0, card.limit - card.used))}</p></div></div></button><div className="mb-1 flex justify-between text-xs"><span>Hạn mức đã dùng</span><span>{pct}%</span></div><div className="mb-4 h-1.5 rounded-full bg-[#F5F5F5]"><div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: card.color }} /></div><p className="text-xs text-[#666666]">Thanh toán thẻ không ghi nhận chi tiêu lần hai. Chỉ phí/lãi/phạt mới là chi phí tài chính.</p><button onClick={() => setModal({ type: "cardPay", cardId: card.id })} className="mt-4 w-full rounded-xl bg-[#111111] px-3.5 py-2.5 text-xs font-semibold text-white">Thanh toán thẻ tín dụng</button></div>;
     })}</div></section>}
     <WorkspaceTransactionHistory title="Lịch sử giao dịch Khoản vay" subtitle="Giải ngân, trả gốc, trả lãi và thanh toán thẻ tín dụng." transactions={periodLoanTransactions} onAdjustTransaction={(transaction) => setModal({ type: "txEdit", transactionId: transaction.id })} />
   </div>
 
   <AnimatePresence>
     {modal?.type === "add" && <AddLoanModal onClose={() => setModal(null)} onAdd={addLoan} />}
+    {modal?.type === "addCard" && <AddCardModal onClose={() => setModal(null)} onAdd={addCreditCard} />}
     {modal?.type === "detail" && selectedLoan && <LoanDetailModal loan={selectedLoan} onClose={() => setModal(null)} onPay={() => setModal({ type: "pay", loanId: selectedLoan.id })} onDisburse={() => setModal({ type: "disburse", loanId: selectedLoan.id })} onEdit={() => setModal({ type: "edit", loanId: selectedLoan.id })} onAdjust={() => setModal({ type: "adjust", loanId: selectedLoan.id })} onSettle={() => settleLoan(selectedLoan.id)} onHide={() => hideLoan(selectedLoan.id)} />}
     {modal?.type === "edit" && selectedLoan && <EditLoanModal loan={selectedLoan} hasTransactions={loanHasTransactions(selectedLoan, loanTransactions)} onClose={() => setModal({ type: "detail", loanId: selectedLoan.id })} onSave={saveLoanEdit} />}
     {modal?.type === "adjust" && selectedLoan && <AdjustLoanDebtModal loan={selectedLoan} onClose={() => setModal({ type: "detail", loanId: selectedLoan.id })} onSave={adjustLoanDebt} />}
@@ -980,7 +1132,7 @@ export function LoansPage() {
     {modal?.type === "cardEdit" && selectedCard && <EditCardModal card={selectedCard} onClose={() => setModal({ type: "cardDetail", cardId: selectedCard.id })} onSave={saveCardEdit} />}
     {modal?.type === "cardAdjust" && selectedCard && <AdjustCardDebtModal card={selectedCard} onClose={() => setModal({ type: "cardDetail", cardId: selectedCard.id })} onSave={adjustCardDebt} />}
     {modal?.type === "cardPay" && selectedCard && <CreditCardPaymentModal card={selectedCard} onClose={() => setModal(null)} onPay={payCreditCard} />}
-    {modal?.type === "txEdit" && selectedLoanTransaction && <EditLoanTransactionModal transaction={selectedLoanTransaction} onClose={() => setModal(null)} onSave={updateLoanHistoryTransaction} />}
+    {modal?.type === "txEdit" && (selectedLoanTransaction ? <EditLoanTransactionModal transaction={selectedLoanTransaction} onClose={() => setModal(null)} onSave={updateLoanHistoryTransaction} /> : <ModalShell title="Không tìm thấy giao dịch" subtitle="Giao dịch này có thể đã bị xóa hoặc chưa có trong dữ liệu hiện tại." onClose={() => setModal(null)}><button type="button" onClick={() => setModal(null)} className="h-13 w-full rounded-2xl bg-[#111111] text-sm font-semibold text-white">Đóng</button></ModalShell>)}
   </AnimatePresence>
   </div>;
 }

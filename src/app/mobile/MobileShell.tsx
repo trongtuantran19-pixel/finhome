@@ -25,7 +25,6 @@ import {
   formatMoney,
   interestSavings,
   investmentCash,
-  investmentHoldings,
   loans,
   personalAccounts,
   personalTransactions,
@@ -131,8 +130,8 @@ function useMobileModel() {
     const cardResult = readMobileJson(finhomeStorageKeys.personalCards, creditCards, "Thẻ tín dụng");
     const goalResult = readMobileJson(finhomeStorageKeys.savingsGoals, savingGoals, "Mục tiêu tiết kiệm");
     const interestResult = readMobileJson(finhomeStorageKeys.savingsInterest, interestSavings, "Sổ tiết kiệm");
-    const cashResult = readMobileNumber(finhomeStorageKeys.investmentCash, investmentCash, "Tiền mặt đầu tư");
-    const holdingResult = readMobileJson(finhomeStorageKeys.investmentHoldings, investmentHoldings, "Danh mục đầu tư");
+    const cashResult = readMobileNumber(finhomeStorageKeys.investmentCash, investmentCash, "Tiền đầu tư");
+    const holdingResult = readMobileJson(finhomeStorageKeys.investmentHoldings, [], "Danh mục đầu tư");
     const extraTxResult = readMobileJson<CashflowTransaction[]>(finhomeStorageKeys.personalTransactions, [], "Giao dịch cá nhân");
     const cancelledTxResult = readMobileJson<string[]>(finhomeStorageKeys.personalCancelledTransactions, [], "Giao dịch đã hủy");
 
@@ -143,7 +142,7 @@ function useMobileModel() {
     const goals = goalResult.value;
     const interest = interestResult.value;
     const cash = cashResult.value;
-    const holdings = holdingResult.value;
+    const holdings = holdingResult.value.filter((holding: any) => holding.id !== "fpt" && holding.id !== "btc");
     const cancelledTxIds = new Set(cancelledTxResult.value);
     const baseTransactions = personalTransactions.map((tx) => cancelledTxIds.has(tx.id) ? { ...tx, status: "cancelled" as const } : tx);
     const allTransactions = [...extraTxResult.value, ...baseTransactions, ...businesses.flatMap((item) => item.transactions)]
@@ -203,7 +202,7 @@ function useMobileModel() {
       })),
       {
         id: "investment:cash",
-        name: "Tiền mặt đầu tư",
+        name: "Tiền đầu tư",
         group: "Đầu tư",
         balance: cash,
         helper: money(cash),
@@ -727,7 +726,7 @@ function InvestmentScreen({ model }: { model: MobileModel }) {
       <main className="px-5 pb-28 pt-5">
         <ScreenState model={model} empty={{ when: model.investmentCash === 0 && model.holdings.length === 0, title: "Chưa có dữ liệu đầu tư", sub: "Thêm tiền mặt đầu tư hoặc khoản nắm giữ để xem danh mục." }}>
           <div className="grid grid-cols-2 gap-3">
-            <MetricCard label="Tiền mặt đầu tư" value={money(model.investmentCash)} />
+            <MetricCard label="Tiền đầu tư" value={money(model.investmentCash)} />
             <MetricCard label="Tổng đầu tư" value={money(model.investmentTotal)} dark />
           </div>
           <Section title="Khoản đầu tư">

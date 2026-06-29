@@ -487,7 +487,7 @@ export function BusinessPageV1() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-            <WorkspaceTimeFilter onChange={setTimeRange} />
+            <WorkspaceTimeFilter value={timeRange} onChange={setTimeRange} />
             <button onClick={() => setModal("create")} className="rounded-xl bg-[#B22222] px-4 py-2.5 text-sm font-semibold text-white"><Plus className="mr-1 inline size-4" /> Thêm không gian</button>
           </div>
         </div>

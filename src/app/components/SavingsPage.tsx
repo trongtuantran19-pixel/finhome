@@ -35,6 +35,7 @@ type AddInterestPayload = {
 
 type SettlementModal = InterestSaving | null;
 type TopUpModal = InterestSaving | null;
+type EditSavingsItemModal = { type: "goal"; id: string } | { type: "interest"; id: string } | null;
 
 const inputClass = "w-full rounded-2xl border border-black/[0.12] bg-white px-4 py-3 text-sm font-semibold text-[#111111] outline-none focus:border-[#B22222] focus:shadow-[0_0_0_4px_rgba(178,34,34,0.08)]";
 const labelClass = "text-[11px] font-semibold uppercase tracking-[0.12em] text-[#737373]";
@@ -61,6 +62,39 @@ function appendPersonalTransaction(transaction: CashflowTransaction) {
   appendStoredItem(finhomeStorageKeys.personalTransactions, transaction);
 }
 
+function savePersonalTransactions(transactions: CashflowTransaction[]) {
+  writeStoredJson(finhomeStorageKeys.personalTransactions, transactions);
+}
+
+function transactionDetailText(transaction: CashflowTransaction | undefined, key: string) {
+  const value = transaction?.details?.[key];
+  return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+function transactionDetailId(transaction: CashflowTransaction | undefined, ...keys: string[]) {
+  for (const key of keys) {
+    const value = transaction?.details?.[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return "";
+}
+
+function accountNameFromTransferSource(source: string | undefined, side: "from" | "to") {
+  const [from, to] = String(source ?? "").split("->").map((part) => part.trim());
+  return side === "from" ? from ?? "" : to ?? "";
+}
+
+function findAccountByIdOrName(accounts: PersonalAccount[], id: string, name: string) {
+  return accounts.find((account) => account.id === id) ?? accounts.find((account) => account.name === name);
+}
+
+function findGoalByIdOrName(goals: SavingGoal[], id: string, name: string) {
+  return goals.find((goal) => goal.id === id) ?? goals.find((goal) => goal.name === name);
+}
+
+function findInterestSavingByIdOrName(list: InterestSaving[], id: string, name: string) {
+  return list.find((saving) => saving.id === id) ?? list.find((saving) => saving.name === name);
+}
 function calculateExpectedInterest(principal: number, annualRate: number, termMonths: number) {
   return Math.round(principal * annualRate / 100 * termMonths / 12);
 }
@@ -373,23 +407,124 @@ function SettlementModalView({ saving, onClose, onConfirm }: { saving: InterestS
 
 function EditSavingsTransactionModal({
   transaction,
+  goals,
+  interestList,
+  accounts,
   onClose,
   onSave,
 }: {
   transaction: CashflowTransaction;
+  goals: SavingGoal[];
+  interestList: InterestSaving[];
+  accounts: PersonalAccount[];
   onClose: () => void;
   onSave: (transaction: CashflowTransaction) => void;
 }) {
-  const [name, setName] = useState(transaction.name);
-  const [amount, setAmount] = useState(String(transaction.amount));
-  const [date, setDate] = useState(transaction.date);
-  const [note, setNote] = useState(transaction.note ?? "");
-  const value = parseNumber(amount);
-  const action = transactionDetailText(transaction, "savingsAction");
+  const safeTransaction = transaction ?? {
+    id: "",
+    date: todayISO(),
+    name: "Giao dịch tiết kiệm",
+    space: "Tiết kiệm",
+    source: "",
+    amount: 0,
+    kind: "transfer",
+    status: "active",
+    note: "",
+  } as CashflowTransaction;
+  const action = transactionDetailText(safeTransaction, "savingsAction");
+  const fromName = transactionDetailText(safeTransaction, "fromAccount") || accountNameFromTransferSource(safeTransaction.source, "from");
+  const toName = transactionDetailText(safeTransaction, "toAccount") || accountNameFromTransferSource(safeTransaction.source, "to");
+  const goalName = transactionDetailText(safeTransaction, "goalName") || (action.includes("Nạp") ? accountNameFromTransferSource(safeTransaction.source, "to") : accountNameFromTransferSource(safeTransaction.source, "from"));
+  const savingName = transactionDetailText(safeTransaction, "savingName") || accountNameFromTransferSource(safeTransaction.source, "to") || accountNameFromTransferSource(safeTransaction.source, "from");
+  const isGoalDeposit = action.includes("Nạp") && !action.includes("sinh lãi") && !action.includes("tiết kiệm sinh lãi");
+  const isGoalWithdraw = action.includes("Rút") && Boolean(goalName);
+  const isInterestTopUp = action.includes("Gửi tiết kiệm") || action.includes("Gửi thêm");
   const isSettlement = action.includes("Tất toán");
-  const isInterestIncome = transaction.kind === "savings_interest";
+  const isInterestIncome = safeTransaction.kind === "savings_interest";
+  const supportsDirectEdit = isGoalDeposit || isGoalWithdraw || isInterestTopUp || isSettlement || isInterestIncome;
+
+  const activeAccounts = accounts.filter((account) => account.status === "active");
+  const activeGoals = goals.filter((goal) => !["hidden", "closed"].includes(goal.status));
+  const activeInterest = interestList.filter((saving) => !["hidden", "closed"].includes(saving.status));
+  const initialAccount = findAccountByIdOrName(activeAccounts, transactionDetailId(safeTransaction, "sourceAccountId", "fromAccountId", "accountId", "toAccountId"), isGoalWithdraw || isSettlement || isInterestIncome ? toName : fromName);
+  const initialGoal = findGoalByIdOrName(activeGoals, transactionDetailId(safeTransaction, "goalId", "savingId"), goalName);
+  const initialSaving = findInterestSavingByIdOrName(activeInterest.length ? activeInterest : interestList, transactionDetailId(safeTransaction, "savingId", "interestSavingId"), savingName);
+
+  const [amount, setAmount] = useState(String(Math.max(0, Number(safeTransaction.amount) || 0)));
+  const [date, setDate] = useState(safeTransaction.date || todayISO());
+  const [note, setNote] = useState(safeTransaction.note ?? "");
+  const [accountId, setAccountId] = useState(initialAccount?.id ?? activeAccounts[0]?.id ?? "");
+  const [goalId, setGoalId] = useState(initialGoal?.id ?? activeGoals[0]?.id ?? "");
+  const [savingId, setSavingId] = useState(initialSaving?.id ?? activeInterest[0]?.id ?? interestList[0]?.id ?? "");
+  const value = parseNumber(amount);
+  const selectedAccount = activeAccounts.find((account) => account.id === accountId);
+  const selectedGoal = activeGoals.find((goal) => goal.id === goalId);
+  const selectedSaving = (activeInterest.length ? activeInterest : interestList).find((saving) => saving.id === savingId);
   const amountLabel = isSettlement ? "Tổng nhận" : isInterestIncome ? "Lãi nhận" : "Số tiền";
-  const canSave = name.trim().length > 0 && value >= 0;
+  const canSave = supportsDirectEdit && value >= 0 && (!isGoalDeposit || (selectedAccount && selectedGoal && value > 0)) && (!isGoalWithdraw || (selectedAccount && selectedGoal && value > 0)) && (!isInterestTopUp || (selectedAccount && selectedSaving && value > 0));
+
+  function buildUpdatedTransaction() {
+    const nextDetails = { ...(safeTransaction.details ?? {}), amount: value };
+    let source = safeTransaction.source ?? "";
+    let name = safeTransaction.name || "Giao dịch tiết kiệm";
+
+    if (isGoalDeposit && selectedAccount && selectedGoal) {
+      source = `${selectedAccount.name} -> ${selectedGoal.name}`;
+      name = safeTransaction.name || "Nạp tiết kiệm mục tiêu";
+      Object.assign(nextDetails, {
+        savingsAction: action || "Nạp mục tiêu",
+        goalId: selectedGoal.id,
+        goalName: selectedGoal.name,
+        sourceAccountId: selectedAccount.id,
+        fromAccount: selectedAccount.name,
+        toAccount: undefined,
+      });
+    } else if (isGoalWithdraw && selectedAccount && selectedGoal) {
+      source = `${selectedGoal.name} -> ${selectedAccount.name}`;
+      name = safeTransaction.name || "Rút tiết kiệm về Cá nhân";
+      Object.assign(nextDetails, {
+        savingsAction: action || "Rút về cá nhân",
+        goalId: selectedGoal.id,
+        goalName: selectedGoal.name,
+        toAccountId: selectedAccount.id,
+        toAccount: selectedAccount.name,
+        fromAccount: undefined,
+      });
+    } else if (isInterestTopUp && selectedAccount && selectedSaving) {
+      source = `${selectedAccount.name} -> ${selectedSaving.name}`;
+      Object.assign(nextDetails, {
+        savingsAction: action || "Gửi thêm sinh lãi",
+        savingId: selectedSaving.id,
+        savingName: selectedSaving.name,
+        sourceAccountId: selectedAccount.id,
+        fromAccount: selectedAccount.name,
+        principal: value,
+      });
+    } else if (isSettlement && selectedAccount) {
+      const principal = Number(nextDetails.principal) || 0;
+      source = `${selectedSaving?.name ?? (savingName || "Tiết kiệm")} -> ${selectedAccount.name}`;
+      Object.assign(nextDetails, {
+        toAccountId: selectedAccount.id,
+        toAccount: selectedAccount.name,
+        savingId: selectedSaving?.id ?? transactionDetailId(safeTransaction, "savingId"),
+        savingName: selectedSaving?.name ?? savingName,
+        total: value,
+        interest: Math.max(0, value - principal),
+      });
+    } else if (isInterestIncome && selectedAccount) {
+      source = `${selectedSaving?.name ?? (savingName || "Tiết kiệm")} -> ${selectedAccount.name}`;
+      Object.assign(nextDetails, {
+        toAccountId: selectedAccount.id,
+        toAccount: selectedAccount.name,
+        savingId: selectedSaving?.id ?? transactionDetailId(safeTransaction, "savingId"),
+        savingName: selectedSaving?.name ?? savingName,
+        interest: value,
+        total: value,
+      });
+    }
+
+    return { ...safeTransaction, name, source, amount: value, date, note: note.trim(), details: nextDetails };
+  }
 
   return <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 p-0 backdrop-blur-sm sm:items-center sm:p-4" onClick={onClose}>
     <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }} className="flex max-h-[92dvh] w-full max-w-md flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:rounded-[28px]" onClick={(event) => event.stopPropagation()}>
@@ -401,7 +536,10 @@ function EditSavingsTransactionModal({
       </div>
 
       <div className="flex-1 space-y-4 overflow-y-auto px-5 pb-4">
-        <div><label className={labelClass}>Tên giao dịch</label><input className={cn(inputClass, "mt-2")} value={name} onChange={(event) => setName(event.target.value)} /></div>
+        {!supportsDirectEdit && <div className="rounded-2xl bg-[#FEF2F2] px-4 py-3 text-sm font-semibold text-[#B22222]">Giao dịch này chưa hỗ trợ điều chỉnh trực tiếp.</div>}
+        {(isGoalDeposit || isGoalWithdraw) && <div><label className={labelClass}>Mục tiêu/khoản gửi</label><div className="mt-2 grid gap-2">{activeGoals.map((goal) => <button key={goal.id} type="button" onClick={() => setGoalId(goal.id)} className={cn("flex items-center justify-between rounded-2xl border px-4 py-3 text-left", goal.id === goalId ? "border-[#B22222] bg-[#FDECEC] text-[#B22222]" : "border-black/[0.08] bg-white text-[#111111]")}><span><span className="block text-sm font-semibold">{goal.name}</span><span className="text-xs text-[#A3A3A3]">{formatMoney(goal.current)}</span></span>{goal.id === goalId && <Check className="size-4" />}</button>)}</div></div>}
+        {(isInterestTopUp || isSettlement || isInterestIncome) && <div><label className={labelClass}>Khoản tiết kiệm</label><div className="mt-2 grid gap-2">{(activeInterest.length ? activeInterest : interestList).map((saving) => <button key={saving.id} type="button" onClick={() => setSavingId(saving.id)} className={cn("flex items-center justify-between rounded-2xl border px-4 py-3 text-left", saving.id === savingId ? "border-[#B22222] bg-[#FDECEC] text-[#B22222]" : "border-black/[0.08] bg-white text-[#111111]")}><span><span className="block text-sm font-semibold">{saving.name}</span><span className="text-xs text-[#A3A3A3]">{saving.bank} · {formatMoney(saving.principal)}</span></span>{saving.id === savingId && <Check className="size-4" />}</button>)}</div></div>}
+        {(isGoalDeposit || isGoalWithdraw || isInterestTopUp || isSettlement || isInterestIncome) && <div><label className={labelClass}>{isGoalWithdraw || isSettlement || isInterestIncome ? "Tài khoản nhận" : "Tài khoản nguồn"}</label><div className="mt-2 grid gap-2">{activeAccounts.map((account) => <button key={account.id} type="button" onClick={() => setAccountId(account.id)} className={cn("flex items-center justify-between rounded-2xl border px-4 py-3 text-left", account.id === accountId ? "border-[#B22222] bg-[#FDECEC] text-[#B22222]" : "border-black/[0.08] bg-white text-[#111111]")}><span><span className="block text-sm font-semibold">{account.name}</span><span className="text-xs text-[#A3A3A3]">Cá nhân: {formatMoney(account.balance)}</span></span>{account.id === accountId && <Check className="size-4" />}</button>)}</div></div>}
         <div><label className={labelClass}>{amountLabel}</label><input className={cn(inputClass, "mt-2")} value={amount} inputMode="numeric" onChange={(event) => setAmount(event.target.value)} /></div>
         <QuickDateField label="Ngày giao dịch" value={date} onChange={setDate} variant="chip" />
         <div><label className={labelClass}>Ghi chú</label><textarea className={cn(inputClass, "mt-2 min-h-20")} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi chú" /></div>
@@ -410,20 +548,99 @@ function EditSavingsTransactionModal({
 
       <div className="grid flex-shrink-0 grid-cols-2 gap-3 border-t border-black/[0.06] bg-white px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3">
         <button onClick={onClose} className="h-12 rounded-2xl border border-black/[0.1] bg-white text-sm font-semibold text-[#111111]">Hủy</button>
-        <button disabled={!canSave} onClick={() => {
-          const nextDetails = { ...(transaction.details ?? {}) };
-          nextDetails.amount = value;
-          if (isSettlement) {
-            const principal = Number(nextDetails.principal) || 0;
-            nextDetails.total = value;
-            nextDetails.interest = Math.max(0, value - principal);
-          }
-          if (isInterestIncome) {
-            nextDetails.interest = value;
-            nextDetails.total = value;
-          }
-          onSave({ ...transaction, name: name.trim(), amount: value, date, note: note.trim(), details: nextDetails });
-        }} className="h-12 rounded-2xl bg-[#B22222] text-sm font-semibold text-white shadow-lg shadow-[#B22222]/20 disabled:bg-[#D4D4D4] disabled:shadow-none">Lưu thay đổi</button>
+        <button disabled={!canSave} onClick={() => onSave(buildUpdatedTransaction())} className="h-12 rounded-2xl bg-[#B22222] text-sm font-semibold text-white shadow-lg shadow-[#B22222]/20 disabled:bg-[#D4D4D4] disabled:shadow-none">Lưu thay đổi</button>
+      </div>
+    </motion.div>
+  </motion.div>;
+}
+
+function EditSavingsItemModalView({
+  modal,
+  goal,
+  saving,
+  onClose,
+  onSaveGoal,
+  onSaveInterest,
+}: {
+  modal: Exclude<EditSavingsItemModal, null>;
+  goal?: SavingGoal;
+  saving?: InterestSaving;
+  onClose: () => void;
+  onSaveGoal: (goal: SavingGoal) => void;
+  onSaveInterest: (saving: InterestSaving) => void;
+}) {
+  const isGoal = modal.type === "goal";
+  const [name, setName] = useState(isGoal ? goal?.name ?? "" : saving?.name ?? "");
+  const [target, setTarget] = useState(String(goal?.target ?? 0));
+  const [start, setStart] = useState(isGoal ? goal?.start ?? todayISO() : saving?.start ?? todayISO());
+  const [due, setDue] = useState(isGoal ? goal?.due ?? todayISO() : saving?.maturity ?? todayISO());
+  const [bank, setBank] = useState(saving?.bank ?? "");
+  const [term, setTerm] = useState(String(saving?.termMonths ?? 0));
+  const [rate, setRate] = useState(String(saving?.annualRate ?? 0));
+  const [note, setNote] = useState(isGoal ? goal?.note ?? "" : saving?.note ?? "");
+  const targetValue = parseNumber(target);
+  const termValue = Number(term) || 0;
+  const rateValue = Number(rate) || 0;
+  const canSave = name.trim().length > 0 && (!isGoal || targetValue > 0) && (isGoal || (termValue >= 0 && rateValue >= 0 && start <= due));
+  const title = isGoal ? "Sửa mục tiêu tiết kiệm" : "Sửa khoản tiết kiệm sinh lãi";
+  const subtitle = isGoal ? "Không sửa trực tiếp số tiền hiện có" : "Không sửa trực tiếp tiền gốc và lãi đã nhận";
+
+  function submit() {
+    if (!canSave) return;
+    if (isGoal && goal) {
+      onSaveGoal({
+        ...goal,
+        name: name.trim(),
+        target: targetValue,
+        monthly: Math.max(0, goal.monthly),
+        start,
+        due,
+        note: note.trim(),
+        status: goal.current >= targetValue ? "completed" : goal.status === "completed" ? "active" : goal.status,
+      });
+    }
+    if (!isGoal && saving) {
+      const nextExpectedInterest = calculateExpectedInterest(saving.principal, rateValue, termValue);
+      onSaveInterest({
+        ...saving,
+        name: name.trim(),
+        bank: bank.trim() || "Ngân hàng",
+        annualRate: Math.max(0, rateValue),
+        termMonths: Math.max(0, termValue),
+        start,
+        maturity: due,
+        expectedInterest: nextExpectedInterest,
+        note: note.trim(),
+      });
+    }
+  }
+
+  return <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 p-0 backdrop-blur-sm sm:items-center sm:p-4" onClick={onClose}>
+    <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }} className="flex max-h-[92dvh] w-full max-w-md flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:rounded-[28px]" onClick={(event) => event.stopPropagation()}>
+      <div className="flex-shrink-0 px-5 pb-3 pt-5">
+        <div className="flex items-start justify-between gap-4">
+          <div><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#A3A3A3]">Không gian tiết kiệm</p><h2 className="mt-1 text-xl font-semibold text-[#111111]">{title}</h2><p className="mt-1 text-xs leading-relaxed text-[#737373]">{subtitle}</p></div>
+          <button onClick={onClose} className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#F5F5F5] text-[#A3A3A3] hover:bg-[#EFEFEF]"><X className="size-4" /></button>
+        </div>
+      </div>
+      <div className="flex-1 space-y-4 overflow-y-auto px-5 pb-4">
+        <div><label className={labelClass}>{isGoal ? "Tên mục tiêu" : "Tên khoản gửi"}</label><input className={cn(inputClass, "mt-2")} value={name} onChange={(event) => setName(event.target.value)} /></div>
+        {isGoal ? <>
+          <div className="rounded-2xl bg-[#F9F6F1] px-4 py-3"><p className="text-xs text-[#737373]">Số tiền hiện có</p><p className="mt-1 text-lg font-semibold text-[#111111]">{formatMoney(goal?.current ?? 0)}</p></div>
+          <div><label className={labelClass}>Số tiền mục tiêu</label><input className={cn(inputClass, "mt-2")} value={target} inputMode="numeric" onChange={(event) => setTarget(event.target.value)} /></div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><QuickDateField label="Ngày bắt đầu" value={start} onChange={setStart} variant="chip" /><QuickDateField label="Ngày mục tiêu" value={due} onChange={setDue} variant="chip" /></div>
+        </> : <>
+          <div className="rounded-2xl bg-[#F9F6F1] px-4 py-3"><p className="text-xs text-[#737373]">Tiền gốc</p><p className="mt-1 text-lg font-semibold text-[#111111]">{formatMoney(saving?.principal ?? 0)}</p></div>
+          <div><label className={labelClass}>Ngân hàng</label><input className={cn(inputClass, "mt-2")} value={bank} onChange={(event) => setBank(event.target.value)} /></div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><label className={labelClass}>Kỳ hạn tháng</label><input className={cn(inputClass, "mt-2")} value={term} inputMode="numeric" onChange={(event) => setTerm(event.target.value)} /></div><div><label className={labelClass}>Lãi suất %/năm</label><input className={cn(inputClass, "mt-2")} value={rate} inputMode="decimal" onChange={(event) => setRate(event.target.value)} /></div></div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><QuickDateField label="Ngày gửi" value={start} onChange={setStart} variant="chip" /><QuickDateField label="Ngày đáo hạn" value={due} onChange={setDue} variant="chip" /></div>
+        </>}
+        <div><label className={labelClass}>Ghi chú</label><textarea className={cn(inputClass, "mt-2 min-h-20")} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi chú" /></div>
+        <div className="rounded-2xl bg-[#F9F6F1] px-4 py-3 text-xs leading-relaxed text-[#666666]">Chỉnh sửa chỉ cập nhật thông tin mô tả, không tạo giao dịch mới và không làm thay đổi số dư ví.</div>
+      </div>
+      <div className="grid flex-shrink-0 grid-cols-2 gap-3 border-t border-black/[0.06] bg-white px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3">
+        <button onClick={onClose} className="h-12 rounded-2xl border border-black/[0.1] bg-white text-sm font-semibold text-[#111111]">Hủy</button>
+        <button disabled={!canSave} onClick={submit} className="h-12 rounded-2xl bg-[#B22222] text-sm font-semibold text-white shadow-lg shadow-[#B22222]/20 disabled:bg-[#D4D4D4] disabled:shadow-none">Lưu thay đổi</button>
       </div>
     </motion.div>
   </motion.div>;
@@ -539,6 +756,7 @@ export function SavingsPage() {
   const [modal, setModal] = useState<SavingsModal>(null);
   const [historyModal, setHistoryModal] = useState<SavingsHistoryModal>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
+  const [editItem, setEditItem] = useState<EditSavingsItemModal>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [settlement, setSettlement] = useState<SettlementModal>(null);
   const [topUp, setTopUp] = useState<TopUpModal>(null);
@@ -864,6 +1082,20 @@ export function SavingsPage() {
     setHistoryModal(null);
   }
 
+  function saveEditedGoal(nextGoal: SavingGoal) {
+    const nextGoals = goals.map((goal) => goal.id === nextGoal.id ? nextGoal : goal);
+    setGoals(nextGoals);
+    writeStoredJson(SAVINGS_STORAGE_KEYS.goals, nextGoals);
+    setEditItem(null);
+  }
+
+  function saveEditedInterest(nextSaving: InterestSaving) {
+    const nextInterestList = interestList.map((saving) => saving.id === nextSaving.id ? nextSaving : saving);
+    setInterestList(nextInterestList);
+    writeStoredJson(SAVINGS_STORAGE_KEYS.interest, nextInterestList);
+    setEditItem(null);
+  }
+
   function settleSaving(accountId: string, interestAmount: number, date: string, earlySettlement: boolean) {
     if (!settlement) return;
     const accounts = loadPersonalAccounts();
@@ -924,7 +1156,7 @@ export function SavingsPage() {
 
   return <div className="min-h-full bg-[#F9F9F9]"><div className="mx-auto max-w-[1200px] space-y-6 px-6 py-8 lg:px-8">
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-[#A3A3A3]">Không gian tiết kiệm độc lập</p><h1 className="text-[1.75rem] font-semibold text-[#111111]">Tiết kiệm</h1><p className="mt-1 text-sm text-[#737373]">Tách rõ mục tiêu tiết kiệm và khoản gửi ngân hàng sinh lãi.</p></div><div className="flex flex-wrap items-center justify-end gap-2"><WorkspaceTimeFilter onChange={setTimeRange} /><button onClick={() => setAdjustOpen(true)} className="flex items-center gap-2 rounded-2xl border border-black/[0.1] bg-white px-4 py-3 text-sm font-semibold text-[#111111]"><SlidersHorizontal className="size-4" /> Điều chỉnh</button><button onClick={() => setAddOpen(true)} className="flex items-center gap-2 rounded-2xl bg-[#B22222] px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-[#B22222]/20"><Plus className="size-4" /> Thêm tiết kiệm</button></div></div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-[#A3A3A3]">Không gian tiết kiệm độc lập</p><h1 className="text-[1.75rem] font-semibold text-[#111111]">Tiết kiệm</h1><p className="mt-1 text-sm text-[#737373]">Tách rõ mục tiêu tiết kiệm và khoản gửi ngân hàng sinh lãi.</p></div><div className="flex flex-wrap items-center justify-end gap-2"><WorkspaceTimeFilter value={timeRange} onChange={setTimeRange} /><button onClick={() => setAdjustOpen(true)} className="flex items-center gap-2 rounded-2xl border border-black/[0.1] bg-white px-4 py-3 text-sm font-semibold text-[#111111]"><SlidersHorizontal className="size-4" /> Điều chỉnh</button><button onClick={() => setAddOpen(true)} className="flex items-center gap-2 rounded-2xl bg-[#B22222] px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-[#B22222]/20"><Plus className="size-4" /> Thêm tiết kiệm</button></div></div>
     </motion.div>
 
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,0.42fr)_minmax(0,0.58fr)]">
@@ -955,13 +1187,14 @@ export function SavingsPage() {
       </div>
     </div>
 
-    <section className="space-y-4"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#A3A3A3]">Loại 1</p><h2 className="mt-1 text-xl font-semibold text-[#111111]">Tiết kiệm mục tiêu</h2></div><div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{activeGoals.map((goal, index) => { const pct = goal.target ? Math.min(100, Math.round(goal.current / goal.target * 100)) : 0; const done = goal.status === "completed" || pct >= 100; return <motion.div key={goal.id} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04 }} className="rounded-[24px] border border-black/[0.07] bg-white p-5 shadow-sm"><div className="mb-5 flex items-start justify-between"><div><p className="text-base font-semibold text-[#111111]">{goal.name}</p><p className="mt-1 text-xs text-[#A3A3A3]">{displayDate(goal.start)} · mục tiêu {displayDate(goal.due)}</p></div><span className={cn("rounded-full px-2.5 py-1 text-[10px] font-semibold", done ? "bg-[#DCFCE7] text-[#166534]" : goal.status === "paused" ? "bg-[#FEF3C7] text-[#92400E]" : "bg-[#F5F5F5] text-[#666666]")}>{done ? "Đã hoàn thành" : goal.status === "paused" ? "Tạm dừng" : "Đang tiết kiệm"}</span></div><div className="mb-3 flex items-end justify-between"><div><p className="mb-1 text-[10px] font-semibold uppercase text-[#A3A3A3]">Hiện có</p><p className="text-2xl font-semibold text-[#111111]">{formatMoney(goal.current)}</p></div><div className="text-right"><p className="mb-1 text-[10px] font-semibold uppercase text-[#A3A3A3]">Mục tiêu</p><p className="text-sm font-semibold text-[#666666]">{formatMoney(goal.target)}</p></div></div><div className="mb-4"><div className="mb-1 flex justify-between text-xs"><span className="font-semibold text-[#B22222]">{pct}%</span><span className="text-[#A3A3A3]">Còn thiếu {formatMoney(Math.max(0, goal.target - goal.current))}</span></div><div className="h-2 rounded-full bg-[#F5F5F5]"><div className="h-full rounded-full bg-[#B22222]" style={{ width: `${pct}%` }} /></div></div><div className="flex items-center justify-between border-t border-black/[0.05] pt-3"><div><p className="text-[10px] font-semibold uppercase text-[#A3A3A3]">Cần góp mỗi tháng</p><p className="text-xs font-semibold">{formatMoney(goal.monthly)}</p></div><div className="flex gap-1.5"><button onClick={() => setModal({ type: "deposit", goalId: goal.id })} className="flex items-center gap-1 rounded-xl bg-[#F0FDF4] px-3 py-2 text-[11px] font-semibold text-[#166534]"><ArrowDown className="size-3" /> Nạp</button><button onClick={() => setModal({ type: "withdraw", goalId: goal.id })} className="flex items-center gap-1 rounded-xl bg-[#FEF2F2] px-3 py-2 text-[11px] font-semibold text-[#B22222]"><ArrowUp className="size-3" /> Rút</button></div></div></motion.div>; })}</div></section>
+    <section className="space-y-4"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#A3A3A3]">Loại 1</p><h2 className="mt-1 text-xl font-semibold text-[#111111]">Tiết kiệm mục tiêu</h2></div><div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{activeGoals.map((goal, index) => { const pct = goal.target ? Math.min(100, Math.round(goal.current / goal.target * 100)) : 0; const done = goal.status === "completed" || pct >= 100; return <motion.div key={goal.id} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04 }} className="rounded-[24px] border border-black/[0.07] bg-white p-5 shadow-sm"><div className="mb-5 flex items-start justify-between"><div><p className="text-base font-semibold text-[#111111]">{goal.name}</p><p className="mt-1 text-xs text-[#A3A3A3]">{displayDate(goal.start)} · mục tiêu {displayDate(goal.due)}</p></div><span className={cn("rounded-full px-2.5 py-1 text-[10px] font-semibold", done ? "bg-[#DCFCE7] text-[#166534]" : goal.status === "paused" ? "bg-[#FEF3C7] text-[#92400E]" : "bg-[#F5F5F5] text-[#666666]")}>{done ? "Đã hoàn thành" : goal.status === "paused" ? "Tạm dừng" : "Đang tiết kiệm"}</span></div><div className="mb-3 flex items-end justify-between"><div><p className="mb-1 text-[10px] font-semibold uppercase text-[#A3A3A3]">Hiện có</p><p className="text-2xl font-semibold text-[#111111]">{formatMoney(goal.current)}</p></div><div className="text-right"><p className="mb-1 text-[10px] font-semibold uppercase text-[#A3A3A3]">Mục tiêu</p><p className="text-sm font-semibold text-[#666666]">{formatMoney(goal.target)}</p></div></div><div className="mb-4"><div className="mb-1 flex justify-between text-xs"><span className="font-semibold text-[#B22222]">{pct}%</span><span className="text-[#A3A3A3]">Còn thiếu {formatMoney(Math.max(0, goal.target - goal.current))}</span></div><div className="h-2 rounded-full bg-[#F5F5F5]"><div className="h-full rounded-full bg-[#B22222]" style={{ width: `${pct}%` }} /></div></div><div className="flex items-center justify-between border-t border-black/[0.05] pt-3"><div><p className="text-[10px] font-semibold uppercase text-[#A3A3A3]">Cần góp mỗi tháng</p><p className="text-xs font-semibold">{formatMoney(goal.monthly)}</p></div><div className="flex flex-wrap justify-end gap-1.5"><button onClick={() => setEditItem({ type: "goal", id: goal.id })} className="rounded-xl border border-black/[0.08] bg-white px-3 py-2 text-[11px] font-semibold text-[#111111]">Chỉnh sửa</button><button onClick={() => setModal({ type: "deposit", goalId: goal.id })} className="flex items-center gap-1 rounded-xl bg-[#F0FDF4] px-3 py-2 text-[11px] font-semibold text-[#166534]"><ArrowDown className="size-3" /> Nạp</button><button onClick={() => setModal({ type: "withdraw", goalId: goal.id })} className="flex items-center gap-1 rounded-xl bg-[#FEF2F2] px-3 py-2 text-[11px] font-semibold text-[#B22222]"><ArrowUp className="size-3" /> Rút</button></div></div></motion.div>; })}</div></section>
 
-    <section className="space-y-4"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#A3A3A3]">Loại 2</p><h2 className="mt-1 text-xl font-semibold text-[#111111]">Tiết kiệm sinh lãi</h2></div><div className="grid grid-cols-1 gap-4 lg:grid-cols-2">{activeInterest.map((saving, index) => { const expectedTotal = saving.principal + saving.expectedInterest; return <motion.div key={saving.id} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04 }} className="rounded-[24px] border border-black/[0.07] bg-white p-5 shadow-sm"><div className="mb-5 flex items-start justify-between"><div className="flex gap-3"><div className="flex size-12 items-center justify-center rounded-2xl bg-[#F8F5F0] text-[#B22222]"><Landmark className="size-5" /></div><div><p className="text-base font-semibold text-[#111111]">{saving.name}</p><p className="mt-1 text-xs text-[#A3A3A3]">{saving.bank} · kỳ hạn {saving.termMonths} tháng</p></div></div><span className="rounded-full bg-[#DCFCE7] px-2.5 py-1 text-[10px] font-semibold text-[#166534]">Đang gửi</span></div><div className="grid grid-cols-2 gap-3"><div className="rounded-2xl bg-[#F8F5F0] p-4"><p className="text-xs text-[#737373]">Số tiền gốc</p><p className="mt-1 text-lg font-semibold text-[#111111]">{formatMoney(saving.principal)}</p></div><div className="rounded-2xl bg-[#F8F5F0] p-4"><p className="text-xs text-[#737373]">Lãi suất</p><p className="mt-1 text-lg font-semibold text-[#111111]">{saving.annualRate}%/năm</p></div><div className="rounded-2xl bg-[#F8F5F0] p-4"><p className="text-xs text-[#737373]">Ngày đáo hạn</p><p className="mt-1 text-sm font-semibold text-[#111111]">{displayDate(saving.maturity)}</p></div><div className="rounded-2xl bg-[#F8F5F0] p-4"><p className="text-xs text-[#737373]">Lãi dự kiến</p><p className="mt-1 text-sm font-semibold text-[#B22222]">{formatMoney(saving.expectedInterest)}</p></div></div><div className="mt-4 flex items-center justify-between rounded-2xl bg-[#111111] px-4 py-3 text-white"><div><p className="text-xs text-white/60">Tổng nhận dự kiến</p><p className="text-xl font-semibold">{formatMoney(expectedTotal)}</p></div><button onClick={() => setSettlement(saving)} className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-[#111111]">Tất toán</button></div>{saving.allowTopUp && <button onClick={() => setTopUp(saving)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-black/[0.08] py-3 text-sm font-semibold text-[#111111]"><WalletCards className="size-4" /> Gửi thêm</button>}</motion.div>; })}</div></section>
+    <section className="space-y-4"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#A3A3A3]">Loại 2</p><h2 className="mt-1 text-xl font-semibold text-[#111111]">Tiết kiệm sinh lãi</h2></div><div className="grid grid-cols-1 gap-4 lg:grid-cols-2">{activeInterest.map((saving, index) => { const expectedTotal = saving.principal + saving.expectedInterest; return <motion.div key={saving.id} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04 }} className="rounded-[24px] border border-black/[0.07] bg-white p-5 shadow-sm"><div className="mb-5 flex items-start justify-between"><div className="flex gap-3"><div className="flex size-12 items-center justify-center rounded-2xl bg-[#F8F5F0] text-[#B22222]"><Landmark className="size-5" /></div><div><p className="text-base font-semibold text-[#111111]">{saving.name}</p><p className="mt-1 text-xs text-[#A3A3A3]">{saving.bank} · kỳ hạn {saving.termMonths} tháng</p></div></div><span className="rounded-full bg-[#DCFCE7] px-2.5 py-1 text-[10px] font-semibold text-[#166534]">Đang gửi</span></div><div className="grid grid-cols-2 gap-3"><div className="rounded-2xl bg-[#F8F5F0] p-4"><p className="text-xs text-[#737373]">Số tiền gốc</p><p className="mt-1 text-lg font-semibold text-[#111111]">{formatMoney(saving.principal)}</p></div><div className="rounded-2xl bg-[#F8F5F0] p-4"><p className="text-xs text-[#737373]">Lãi suất</p><p className="mt-1 text-lg font-semibold text-[#111111]">{saving.annualRate}%/năm</p></div><div className="rounded-2xl bg-[#F8F5F0] p-4"><p className="text-xs text-[#737373]">Ngày đáo hạn</p><p className="mt-1 text-sm font-semibold text-[#111111]">{displayDate(saving.maturity)}</p></div><div className="rounded-2xl bg-[#F8F5F0] p-4"><p className="text-xs text-[#737373]">Lãi dự kiến</p><p className="mt-1 text-sm font-semibold text-[#B22222]">{formatMoney(saving.expectedInterest)}</p></div></div><div className="mt-4 flex items-center justify-between rounded-2xl bg-[#111111] px-4 py-3 text-white"><div><p className="text-xs text-white/60">Tổng nhận dự kiến</p><p className="text-xl font-semibold">{formatMoney(expectedTotal)}</p></div><button onClick={() => setSettlement(saving)} className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-[#111111]">Tất toán</button></div><div className="mt-3 grid grid-cols-2 gap-2"><button onClick={() => setEditItem({ type: "interest", id: saving.id })} className="rounded-2xl border border-black/[0.08] py-3 text-sm font-semibold text-[#111111]">Chỉnh sửa</button>{saving.allowTopUp && <button onClick={() => setTopUp(saving)} className="flex items-center justify-center gap-2 rounded-2xl border border-black/[0.08] py-3 text-sm font-semibold text-[#111111]"><WalletCards className="size-4" /> Gửi thêm</button>}</div></motion.div>; })}</div></section>
     <WorkspaceTransactionHistory title="Lịch sử giao dịch Tiết kiệm" subtitle="Nạp, rút, gửi thêm, tất toán và nhận lãi tiết kiệm." transactions={periodSavingsTransactions} onAdjustTransaction={(transaction) => setHistoryModal({ type: "txEdit", transactionId: transaction.id })} />
   </div>
   <AnimatePresence>{modal && selectedGoal && <SavingsActionModal modal={modal} goal={selectedGoal} onClose={() => setModal(null)} onConfirm={updateGoalAmount} />}</AnimatePresence>
-  <AnimatePresence>{historyModal && selectedSavingsTransaction && <EditSavingsTransactionModal transaction={selectedSavingsTransaction} onClose={() => setHistoryModal(null)} onSave={updateSavingsHistoryTransaction} />}</AnimatePresence>
+  <AnimatePresence>{historyModal && selectedSavingsTransaction && <EditSavingsTransactionModal transaction={selectedSavingsTransaction} goals={goals} interestList={interestList} accounts={loadPersonalAccounts()} onClose={() => setHistoryModal(null)} onSave={updateSavingsHistoryTransaction} />}</AnimatePresence>
+  <AnimatePresence>{editItem && <EditSavingsItemModalView modal={editItem} goal={editItem.type === "goal" ? goals.find((goal) => goal.id === editItem.id) : undefined} saving={editItem.type === "interest" ? interestList.find((saving) => saving.id === editItem.id) : undefined} onClose={() => setEditItem(null)} onSaveGoal={saveEditedGoal} onSaveInterest={saveEditedInterest} />}</AnimatePresence>
   <AnimatePresence>{adjustOpen && <AdjustSavingsModal goals={goals} interestList={interestList} onClose={() => setAdjustOpen(false)} onConfirm={adjustSavings} />}</AnimatePresence>
   <AnimatePresence>{addOpen && <AddSavingsModal onClose={() => setAddOpen(false)} onAddGoal={addGoalFromModal} onAddInterest={addInterestFromModal} />}</AnimatePresence>
   <AnimatePresence>{settlement && <SettlementModalView saving={settlement} onClose={() => setSettlement(null)} onConfirm={settleSaving} />}</AnimatePresence>

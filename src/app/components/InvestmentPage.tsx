@@ -9,7 +9,6 @@ import { FormSelect } from "./FormSelect";
 import {
   formatMoney,
   investmentCash,
-  investmentHoldings,
   personalAccounts,
   type CashflowTransaction,
   type InvestmentHolding,
@@ -68,9 +67,15 @@ function normalizeHolding(item: Partial<InvestmentHolding>): InvestmentHolding {
   };
 }
 
+function isSeedInvestmentHolding(item: InvestmentHolding) {
+  return item.id === "fpt" || item.id === "btc";
+}
+
 function loadHoldings() {
-  const stored = readStoredJson<unknown>(finhomeStorageKeys.investmentHoldings, investmentHoldings);
-  return (Array.isArray(stored) ? stored : investmentHoldings).map((item) => normalizeHolding(item as Partial<InvestmentHolding>));
+  const stored = readStoredJson<unknown>(finhomeStorageKeys.investmentHoldings, []);
+  return (Array.isArray(stored) ? stored : [])
+    .map((item) => normalizeHolding(item as Partial<InvestmentHolding>))
+    .filter((item) => !isSeedInvestmentHolding(item));
 }
 
 function saveHoldings(value: InvestmentHolding[]) {
@@ -84,6 +89,30 @@ function loadAccounts() {
 
 function saveAccounts(value: PersonalAccount[]) {
   writeStoredJson(finhomeStorageKeys.personalAccounts, value);
+}
+
+function getInvestmentCostBreakdown(holding: InvestmentHolding) {
+  const totalBoughtQuantity = holding.buyHistory.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
+  const totalPurchaseAmount = holding.buyHistory.reduce((sum, item) => sum + Number(item.quantity ?? 0) * Number(item.price ?? 0), 0);
+  const totalBuyFee = holding.buyHistory.reduce((sum, item) => sum + Number(item.fee ?? 0), 0);
+  const remainingRatio = totalBoughtQuantity > 0 ? Math.max(0, holding.quantity) / totalBoughtQuantity : 0;
+  const allocatedBuyFee = Math.round(totalBuyFee * remainingRatio);
+  return {
+    totalPurchaseAmount,
+    allocatedBuyFee,
+    remainingCapital: holding.remainingCapital,
+  };
+}
+
+function getSaleBreakdown(sale: InvestmentHolding["sellHistory"][number]) {
+  const quantity = Number(sale.quantity ?? 0);
+  const price = Number(sale.price ?? 0);
+  const fee = Number(sale.fee ?? 0);
+  const grossProceeds = quantity * price;
+  const netProceeds = grossProceeds - fee;
+  const realizedPL = Number(sale.realizedPL ?? 0);
+  const capitalSold = netProceeds - realizedPL;
+  return { quantity, price, fee, grossProceeds, netProceeds, realizedPL, capitalSold };
 }
 
 function appendPersonalTransaction(transaction: CashflowTransaction) {
@@ -130,11 +159,11 @@ function TransferModal({ cash, onClose, onConfirm }: { cash: number; onClose: ()
   const canSave = value > 0 && value <= cash && Boolean(target);
 
   return (
-    <Modal title="Chuyển tiền từ Đầu tư" sub="Chỉ chuyển từ Tiền mặt đầu tư sang tài khoản cá nhân." onClose={onClose}>
+    <Modal title="Chuyển tiền từ Đầu tư" sub="Chỉ chuyển từ Tiền đầu tư sang tài khoản cá nhân." onClose={onClose}>
       <div className="space-y-4">
         <div className="rounded-2xl bg-[#F8F6F3] p-4">
           <p className="text-xs text-[#666666]">Nguồn tiền</p>
-          <p className="mt-1 font-semibold text-[#111111]">Tiền mặt đầu tư · {formatMoney(cash)}</p>
+          <p className="mt-1 font-semibold text-[#111111]">Tiền đầu tư · {formatMoney(cash)}</p>
         </div>
         <Field label="Đến tài khoản">
           <FormSelect title="Chọn tài khoản nhận" value={accountId} onChange={setAccountId} options={accounts.map((account) => ({ value: account.id, label: account.name, sub: `Cá nhân · ${formatMoney(account.balance)}` }))} />
@@ -145,7 +174,7 @@ function TransferModal({ cash, onClose, onConfirm }: { cash: number; onClose: ()
         </div>
         <Field label="Ghi chú"><textarea className={cn(inputClass, "min-h-20")} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi chú" /></Field>
         <p className={cn("rounded-2xl px-4 py-3 text-sm", value > cash ? "bg-[#FEF2F2] text-[#B22222]" : "bg-[#F8F6F3] text-[#666666]")}>
-          {value > cash ? "Số tiền chuyển không được lớn hơn tiền mặt đầu tư." : `Tiền mặt đầu tư giảm ${formatMoney(value)}; ${target?.name ?? "tài khoản nhận"} tăng ${formatMoney(value)}. Không tênh thu nhập/chi tiêu.`}
+          {value > cash ? "Số tiền chuyển không được lớn hơn tiền mặt đầu tư." : `Tiền đầu tư giảm ${formatMoney(value)}; ${target?.name ?? "tài khoản nhận"} tăng ${formatMoney(value)}. Không tênh thu nhập/chi tiêu.`}
         </p>
         <div className="grid grid-cols-2 gap-3">
           <button onClick={onClose} className="rounded-2xl border border-black/[0.12] py-3 font-semibold">Hủy</button>
@@ -195,7 +224,7 @@ function BuyModal({ cash, holdings, onClose, onConfirm }: { cash: number; holdin
 
         <div className="grid grid-cols-2 gap-3"><Field label="Số lượng"><input className={inputClass} value={quantity} inputMode="decimal" onChange={(event) => setQuantity(event.target.value)} /></Field><Field label="Giá mua / đơn vị"><input className={inputClass} value={price} inputMode="numeric" onChange={(event) => setPrice(event.target.value)} /></Field></div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><Field label="Phí mua"><input className={inputClass} value={fee} inputMode="numeric" onChange={(event) => setFee(event.target.value)} /></Field><QuickDateField value={date} onChange={setDate} /></div>
-        <p className={cn("rounded-2xl px-4 py-3 text-sm", total > cash ? "bg-[#FEF2F2] text-[#B22222]" : "bg-[#F8F6F3] text-[#666666]")}>{total > cash ? "Tiền mặt đầu tư không đủ để mua." : `Tiền mặt đầu tư giảm ${formatMoney(total)}. ${mode === "add" ? "Số lượng và giá vốn bình quân sẽ được cập nhật." : "Một khoản đầu tư mới sẽ được tạo."}`}</p>
+        <p className={cn("rounded-2xl px-4 py-3 text-sm", total > cash ? "bg-[#FEF2F2] text-[#B22222]" : "bg-[#F8F6F3] text-[#666666]")}>{total > cash ? "Tiền đầu tư không đủ để mua." : `Tiền đầu tư giảm ${formatMoney(total)}. ${mode === "add" ? "Số lượng và giá vốn bình quân sẽ được cập nhật." : "Một khoản đầu tư mới sẽ được tạo."}`}</p>
         <button disabled={!canSave} onClick={() => { const item = selectedHolding; onConfirm({ mode, holdingId: mode === "add" ? holdingId : undefined, code: mode === "add" ? item?.code ?? "" : normalizedCode, name: mode === "add" ? item?.name ?? "" : name.trim(), type: mode === "add" ? item?.type ?? "Khác" : assetType.trim() || "Khác", quantity: qty, price: unitPrice, fee: feeValue, date }); onClose(); }} className="w-full rounded-2xl bg-[#111111] py-3 font-semibold text-white disabled:bg-[#D4D4D4]">{mode === "add" ? "Xác nhận mua thêm" : "Xác nhận mua mới"}</button>
       </div>
     </Modal>
@@ -385,7 +414,7 @@ export function InvestmentPage() {
       date: buy.date,
       name: `Mua ${holding.code}`,
       space: "Đầu tư",
-      source: "Tiền mặt đầu tư",
+      source: "Tiền đầu tư",
       amount: buy.quantity * buy.price + buy.fee,
       kind: "investment_buy" as const,
       status: "active" as const,
@@ -481,7 +510,7 @@ export function InvestmentPage() {
       date,
       name: "Chuyển tiền từ Đầu tư",
       space: "Đầu tư",
-      source: `Tiền mặt đầu tư -> ${target.name}`,
+      source: `Tiền đầu tư -> ${target.name}`,
       amount,
       kind: "transfer",
       status: "active",
@@ -536,7 +565,7 @@ export function InvestmentPage() {
       date: payload.date,
       name: `${payload.mode === "add" ? "Mua thêm" : "Mua mới"} ${payload.code}`,
       space: "Đầu tư",
-      source: "Tiền mặt đầu tư",
+      source: "Tiền đầu tư",
       amount: total,
       kind: "investment_buy",
       status: "active",
@@ -657,7 +686,7 @@ export function InvestmentPage() {
   }
 
   const kpis = [
-    { label: "Tiền mặt đầu tư", value: formatMoney(cash), sub: "Tiền riêng của không gian Đầu tư", icon: DollarSign, color: "text-[#111111]" },
+    { label: "Tiền đầu tư", value: formatMoney(cash), sub: "Tiền riêng của không gian Đầu tư", icon: DollarSign, color: "text-[#111111]" },
     { label: "Tổng vốn đang đầu tư", value: formatMoney(investedCapital), sub: "Chỉ vốn còn nắm giữ", icon: BarChart2, color: "text-[#111111]" },
     { label: "Số khoản đang nắm giữ", value: String(active.length), sub: "Không gồm mã đã bán hết", icon: TrendingUp, color: "text-[#111111]" },
     { label: "Lãi/lỗ đã chốt", value: formatMoney(realizedPL), sub: "Chỉ ghi nhận khi bán", icon: TrendingUp, color: realizedPL >= 0 ? "text-[#166534]" : "text-[#B22222]" },
@@ -673,7 +702,7 @@ export function InvestmentPage() {
             <h1 className="text-[1.9rem] font-semibold text-[#111111]">Đầu tư</h1>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-            <WorkspaceTimeFilter onChange={setTimeRange} />
+            <WorkspaceTimeFilter value={timeRange} onChange={setTimeRange} />
             <button onClick={() => setModal("transfer")} className="rounded-xl border border-black/[0.12] bg-white px-3.5 py-2 text-xs font-semibold text-[#111111]"><ArrowRightLeft className="mr-1 inline size-3.5" /> Chuyển tiền</button>
             <button onClick={() => setModal("buy")} className="rounded-xl bg-[#111111] px-3.5 py-2 text-xs font-semibold text-white"><Plus className="mr-1 inline size-3.5" /> Mua</button>
             <button onClick={() => setModal("sell")} className="rounded-xl bg-[#B22222] px-3.5 py-2 text-xs font-semibold text-white">Bán</button>
@@ -739,27 +768,64 @@ export function InvestmentPage() {
             </div>
           </div>
 
-          {current && (
-            <div className="rounded-2xl border border-black/[0.07] bg-white p-5">
-              <p className="text-xs font-semibold uppercase text-[#A3A3A3]">Chi tiết mã đầu tư</p>
-              <h2 className="mt-1 text-xl font-semibold text-[#111111]">{current.code} · {current.name}</h2>
-              <div className="mt-5 grid grid-cols-2 gap-3">
-                {[["Số lượng", current.quantity.toLocaleString("vi-VN")], ["Tổng vốn còn lại", formatMoney(current.remainingCapital)], ["Giá vốn bánh quân", formatMoney(current.avgCost)], ["Lãi/lỗ đã chốt", formatMoney(current.realizedPL)]].map(([label, value]) => (
-                  <div key={label} className="rounded-xl bg-[#F8F6F3] p-3">
-                    <p className="text-[10px] font-semibold uppercase text-[#666666]">{label}</p>
-                    <p className="mt-1 font-semibold">{value}</p>
+          {current && (() => {
+            const costBreakdown = getInvestmentCostBreakdown(current);
+            return (
+              <div className="rounded-2xl border border-black/[0.07] bg-white p-5">
+                <p className="text-xs font-semibold uppercase text-[#A3A3A3]">Chi tiết mã đầu tư</p>
+                <h2 className="mt-1 text-xl font-semibold text-[#111111]">{current.code} · {current.name}</h2>
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  <div className="rounded-xl bg-[#F8F6F3] p-3">
+                    <p className="text-[10px] font-semibold uppercase text-[#666666]">Số lượng</p>
+                    <p className="mt-1 font-semibold">{current.quantity.toLocaleString("vi-VN")}</p>
                   </div>
-                ))}
-              </div>
-              <p className="mb-2 mt-5 text-sm font-semibold text-[#111111]">Lịch sử bán</p>
-              {current.sellHistory.length ? current.sellHistory.map((sale, index) => (
-                <div key={`${sale.date}-${index}`} className="mb-2 rounded-xl bg-[#F8F6F3] p-3">
-                  <div className="flex justify-between gap-3"><p className="font-semibold">{sale.quantity} · {formatMoney(sale.price)}</p><span className="rounded-full bg-white px-2 py-1 text-xs">{sale.note}</span></div>
-                  <p className="mt-1 text-xs text-[#666666]">{sale.date} · Lãi/lỗ {formatMoney(sale.realizedPL)}</p>
+                  <div className="rounded-xl bg-[#F8F6F3] p-3">
+                    <p className="text-[10px] font-semibold uppercase text-[#666666]">Giá vốn bình quân</p>
+                    <p className="mt-1 font-semibold">{formatMoney(current.avgCost)}</p>
+                    <p className="mt-1 text-[11px] text-[#777777]">Đã bao gồm phí mua</p>
+                  </div>
+                  <div className="rounded-xl bg-[#F8F6F3] p-3">
+                    <p className="text-[10px] font-semibold uppercase text-[#666666]">Tổng tiền mua</p>
+                    <p className="mt-1 font-semibold">{formatMoney(costBreakdown.totalPurchaseAmount)}</p>
+                  </div>
+                  <div className="rounded-xl bg-[#F8F6F3] p-3">
+                    <p className="text-[10px] font-semibold uppercase text-[#666666]">Phí mua đã phân bổ</p>
+                    <p className="mt-1 font-semibold">{formatMoney(costBreakdown.allocatedBuyFee)}</p>
+                  </div>
+                  <div className="rounded-xl bg-[#F8F6F3] p-3">
+                    <p className="text-[10px] font-semibold uppercase text-[#666666]">Tổng vốn còn lại</p>
+                    <p className="mt-1 font-semibold">{formatMoney(costBreakdown.remainingCapital)}</p>
+                  </div>
+                  <div className="rounded-xl bg-[#F8F6F3] p-3">
+                    <p className="text-[10px] font-semibold uppercase text-[#666666]">Lãi/lỗ đã chốt</p>
+                    <p className={cn("mt-1 font-semibold", current.realizedPL >= 0 ? "text-[#166534]" : "text-[#B22222]")}>{formatMoney(current.realizedPL)}</p>
+                  </div>
                 </div>
-              )) : <p className="text-xs text-[#A3A3A3]">Chưa có lịch sử bán.</p>}
-            </div>
-          )}
+                <p className="mb-2 mt-5 text-sm font-semibold text-[#111111]">Lịch sử bán</p>
+                {current.sellHistory.length ? current.sellHistory.map((sale, index) => {
+                  const breakdown = getSaleBreakdown(sale);
+                  return (
+                    <div key={`${sale.date}-${index}`} className="mb-2 rounded-xl bg-[#F8F6F3] p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold">{breakdown.quantity.toLocaleString("vi-VN")} · {formatMoney(breakdown.price)}</p>
+                          <p className="mt-1 text-xs text-[#666666]">{sale.date} · {sale.note}</p>
+                        </div>
+                        <span className={cn("rounded-full bg-white px-2 py-1 text-xs font-semibold", breakdown.realizedPL >= 0 ? "text-[#166534]" : "text-[#B22222]")}>{formatMoney(breakdown.realizedPL)}</span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-[#666666] sm:grid-cols-4">
+                        <div><p className="uppercase text-[#A3A3A3]">Số lượng bán</p><b className="text-[#111111]">{breakdown.quantity.toLocaleString("vi-VN")}</b></div>
+                        <div><p className="uppercase text-[#A3A3A3]">Giá bán</p><b className="text-[#111111]">{formatMoney(breakdown.price)}</b></div>
+                        <div><p className="uppercase text-[#A3A3A3]">Phí bán</p><b className="text-[#111111]">{formatMoney(breakdown.fee)}</b></div>
+                        <div><p className="uppercase text-[#A3A3A3]">Tiền bán ròng</p><b className="text-[#111111]">{formatMoney(breakdown.netProceeds)}</b></div>
+                      </div>
+                      <p className="mt-2 text-xs text-[#777777]">Lãi/lỗ đã chốt = tiền bán ròng sau phí bán - giá vốn phần bán.</p>
+                    </div>
+                  );
+                }) : <p className="text-xs text-[#A3A3A3]">Chưa có lịch sử bán.</p>}
+              </div>
+            );
+          })()}
         </div>
 
       </div>

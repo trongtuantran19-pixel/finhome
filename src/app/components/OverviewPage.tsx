@@ -12,7 +12,6 @@ import {
   formatVnd,
   interestSavings,
   investmentCash,
-  investmentHoldings,
   loans,
   metrics as defaultMetrics,
   personalAccounts,
@@ -246,7 +245,7 @@ function sumValues(values: number[]) {
 
 function getInvestmentSnapshot() {
   const cash = readStoredNumber(finhomeStorageKeys.investmentCash, investmentCash);
-  const holdings = readStoredJson<InvestmentHolding[]>(finhomeStorageKeys.investmentHoldings, investmentHoldings);
+  const holdings = readStoredJson<InvestmentHolding[]>(finhomeStorageKeys.investmentHoldings, []).filter((holding) => holding.id !== "fpt" && holding.id !== "btc");
   const activeHoldings = holdings.filter((holding) => holding.status === "holding" && holding.quantity > 0);
   const investedCapital = sumValues(activeHoldings.map((holding) => holding.remainingCapital));
   const realizedPL = sumValues(holdings.map((holding) => holding.realizedPL));
